@@ -1,7 +1,10 @@
 # Development / source assets (large)
-assets/raw/
-assets/source/
-scripts/
+/assets/raw/
+/assets/source/
+# Con barra inicial: solo la carpeta scripts/ de la raíz (la del sitio PWA).
+# Sin ella, git ignoraba cualquier carpeta "scripts" a cualquier profundidad y
+# se llevaba puesta orbit-rides/services/api/scripts/, que quedó fuera del commit.
+/scripts/
 
 # OS
 .DS_Store

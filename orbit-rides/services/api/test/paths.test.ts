@@ -14,15 +14,19 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, sep, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findResourceDir, resourceDirCandidates, ResourceNotFoundError } from '../src/lib/paths.js';
 
 describe('candidatos de búsqueda', () => {
+  // Las expectativas pasan por `resolve` igual que la implementación: en Windows
+  // una ruta raíz sin unidad (`\repo\...`) recibe la unidad actual (`C:\repo\...`),
+  // y comparar contra un `join` pelado fallaba solo en Windows. En POSIX `resolve`
+  // sobre una ruta absoluta es la identidad, así que la afirmación no cambia.
   it('incluye el layout compilado y el de fuente, en ese orden', () => {
     const candidates = resourceDirCandidates(join(sep, 'repo', 'services', 'api', 'dist', 'scripts'), 'migrations');
-    expect(candidates[0]).toBe(join(sep, 'repo', 'services', 'api', 'migrations'));
-    expect(candidates[1]).toBe(join(sep, 'repo', 'services', 'api', 'dist', 'migrations'));
+    expect(candidates[0]).toBe(resolve(join(sep, 'repo', 'services', 'api', 'migrations')));
+    expect(candidates[1]).toBe(resolve(join(sep, 'repo', 'services', 'api', 'dist', 'migrations')));
   });
 
   it('no devuelve duplicados ni rutas vacías', () => {

@@ -1,0 +1,33 @@
+# Normalización de fin de línea para el repositorio completo.
+#
+# Sin esto, mover el proyecto entre Windows y Linux produce diffs enormes que no
+# cambian un solo carácter de contenido: solo CRLF por LF. Ya pasó dos veces en
+# este repo — 19 archivos "modificados" que nadie tocó, y que `git diff
+# --ignore-all-space --stat` mostraba vacíos.
+#
+# `text=auto` guarda LF en el repositorio y entrega a cada sistema lo que le
+# corresponde al hacer checkout.
+* text=auto
+
+# Los scripts de Windows necesitan CRLF para ejecutarse bien.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell y gradlew necesitan LF, incluso en Windows.
+*.sh    text eol=lf
+gradlew text eol=lf
+
+# Binarios: que git no los toque.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.pbf  binary
+*.xlsx binary
+*.tgz  binary
+*.zip  binary
+*.keystore binary

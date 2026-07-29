@@ -4,6 +4,68 @@ Todo lo necesario para retomar el proyecto donde quedó.
 
 ---
 
+## Actualización — 28/07/2026: la migración ya se hizo, y esto es lo que falló
+
+El proyecto se movió a `C:\Proyectos\APTraslados` en una máquina nueva. El
+backend corre: `npm run smoke` da **TODO OK, 18 pasos**. Pero el camino no fue
+el que este documento prometía, y vale la pena dejarlo escrito.
+
+### `git clone` NO alcanzaba: faltaba `services/api/scripts/`
+
+El `.gitignore` de la raíz de APTraslados tenía esta regla:
+
+```
+scripts/
+```
+
+Sin barra inicial. En gitignore eso matchea **cualquier** carpeta llamada
+`scripts` a cualquier profundidad. Estaba pensada para la carpeta del sitio PWA,
+pero se llevó puesta `orbit-rides/services/api/scripts/`. Git la ignoró en
+silencio: `git add orbit-rides` nunca la vio, y `migrate.ts`, `seed.ts`,
+`smoke.ts` y `request-ride.ts` **nunca entraron al commit**.
+
+Los síntomas no señalaban la causa:
+
+- `docker compose up --build` fallaba en `test -f .../dist/scripts/migrate.js`
+  con código 1 y **sin errores de TypeScript**. El guardián del Dockerfile hizo
+  exactamente su trabajo: detectó que faltaba la salida esperada.
+- `npm run smoke` daba `Cannot find module ...\scripts\smoke.ts`.
+
+Ya está corregido: la regla ahora es `/scripts/`, y los archivos se recuperaron
+copiándolos de la máquina anterior.
+
+**Para verificar que no falta nada más**, en cualquier máquina de origen:
+
+```powershell
+git ls-files --others --ignored --exclude-standard orbit-rides
+```
+
+Todo lo que salga que no sea `node_modules`, `dist` o `*.tsbuildinfo` es
+material que nunca llegó al repositorio.
+
+### El test de rutas fallaba solo en Windows
+
+`resourceDirCandidates` usa `resolve()`, que en Windows le antepone la unidad
+actual a una ruta sin unidad: devuelve `C:\repo\...`. El test comparaba contra
+`join(sep, ...)` → `\repo\...`. El código estaba bien; la expectativa asumía
+POSIX. Se arregló normalizando el lado esperado con el mismo `resolve()`.
+
+### No encadenes los comandos de Docker con `>>`
+
+Postgres tarda unos segundos en quedar `healthy`. Si pegás toda la secuencia de
+golpe, `migrate` y `seed` corren contra una base que todavía no acepta
+conexiones y fallan con `ECONNREFUSED`. Después el smoke da
+`relation "users" does not exist`, que parece otro problema y no lo es.
+
+Corré `docker compose ps`, confirmá `healthy`, y recién ahí migrate y seed.
+
+### Ruido de CRLF: resuelto de raíz
+
+Se agregó `.gitattributes` en la raíz de APTraslados, no solo en `orbit-rides/`.
+Los 19 archivos fantasma no deberían volver.
+
+---
+
 ## 0. Antes de mover nada: limpiar el ruido de git
 
 ### Primero, un candado que dejé colgado

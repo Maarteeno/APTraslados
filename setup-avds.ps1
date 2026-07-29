@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 #  Orbit Rides - Crea los dos emuladores Android (pasajero y conductor)
 #
 #  Requisito previo:  setup-dev.bat -Android

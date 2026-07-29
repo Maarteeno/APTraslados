@@ -120,15 +120,50 @@ async function login(phone: string, label: string): Promise<string | null> {
   return body.token;
 }
 
-/** Si quedó un viaje abierto de una corrida anterior, se cancela. */
-async function cleanupActiveTrip(token: string, label: string): Promise<void> {
+/**
+ * Cierra un viaje que quedó abierto de una corrida anterior.
+ *
+ * Antes esto llamaba a /cancel y NO miraba la respuesta: imprimía «se cancela»
+ * pasara lo que pasara. El problema apareció al probar a mano en el emulador y
+ * dejar viajes en IN_PROGRESS: **un viaje en curso no se puede cancelar** —es
+ * una regla del dominio, con su test— así que el cancel devolvía 409, la
+ * limpieza lo tragaba, y el smoke moría cinco pasos después con «ya tenés un
+ * viaje en curso», que no señala la causa en absoluto.
+ *
+ * Ahora cada estado se cierra como corresponde y el resultado se verifica.
+ *
+ * `asDriver` importa porque completar un viaje es una acción del CONDUCTOR: el
+ * pasajero no puede, y con su token el intento devolvería 403.
+ */
+async function cleanupActiveTrip(token: string, label: string, asDriver = false): Promise<void> {
   const { status, body } = await call<{ trip: { id: string; status: string } | null }>(
     'GET', '/v1/trips/active', token,
   );
   if (status !== 200) { info(`${label}: no se pudo consultar viaje activo (${status})`); return; }
   if (!body.trip) { info(`${label}: sin viajes abiertos`); return; }
-  info(`${label}: había un viaje ${body.trip.status} de una corrida anterior, se cancela`);
-  await call('POST', `/v1/trips/${body.trip.id}/cancel`, token, { reason: 'limpieza de smoke test' });
+
+  const trip = body.trip;
+  const inProgress = trip.status === 'IN_PROGRESS';
+
+  if (inProgress && !asDriver) {
+    // El pasajero no puede cerrar un viaje en curso. No es un fallo: lo va a
+    // cerrar el conductor cuando le toque su turno de limpieza.
+    info(`${label}: viaje ${trip.status}, lo cierra el conductor`);
+    return;
+  }
+
+  const result = inProgress
+    ? await call('POST', `/v1/trips/${trip.id}/complete`, token, {
+        actualDistanceMeters: 1000, actualDurationSeconds: 300,
+      })
+    : await call('POST', `/v1/trips/${trip.id}/cancel`, token, { reason: 'limpieza de smoke test' });
+
+  if (result.status === 200) {
+    info(`${label}: se cerró un viaje ${trip.status} de una corrida anterior`);
+  } else {
+    fail(`${label}: no se pudo cerrar el viaje ${trip.status} — ${describeError(result.status, result.body)}`);
+    info('el smoke va a fallar más adelante con "ya tenés un viaje en curso"; la causa es esta');
+  }
 }
 
 async function main(): Promise<void> {
@@ -152,8 +187,21 @@ async function main(): Promise<void> {
 
   // ── 3. Limpieza
   step('Limpiando viajes de corridas anteriores');
+  // Los CONDUCTORES primero: un viaje en curso solo lo puede cerrar el
+  // conductor, y hasta que se cierre el pasajero sigue con su viaje abierto.
+  // Al revés, el pasajero no podría hacer nada y el smoke fallaría después.
+  for (const [i, t] of driverTokens.entries()) await cleanupActiveTrip(t, `conductor ${i + 1}`, true);
   await cleanupActiveTrip(riderToken, 'pasajero');
-  for (const [i, t] of driverTokens.entries()) await cleanupActiveTrip(t, `conductor ${i + 1}`);
+
+  // Y se verifica que quedó limpio, en vez de suponerlo. Sin esto, cualquier
+  // fallo de la limpieza reaparece cinco pasos después como un 409 que no dice
+  // de dónde viene.
+  const stillOpen = await call<{ trip: { status: string } | null }>('GET', '/v1/trips/active', riderToken);
+  check(
+    stillOpen.body.trip === null,
+    'el pasajero quedó sin viajes abiertos',
+    `PROBLEMA: al pasajero le quedó un viaje ${stillOpen.body.trip?.status}`,
+  );
 
   // ── 4. Conductores online
   step('Poniendo conductores online');
@@ -176,6 +224,8 @@ async function main(): Promise<void> {
     quoteId: string; fareCents: number; currency: string; distanceMeters: number;
     durationSeconds: number; routeProvider: string; expiresAt: string;
     breakdown: { baseCents: number; distanceCents: number; timeCents: number };
+    routePolyline: string | null;
+    routeSteps: Array<{ type: string; name: string; at: { lat: number; lng: number } }>;
   }>('POST', '/v1/quotes', riderToken, {
     origin: ORIGIN, originAddress: 'Bulevar España 2314',
     destination: DESTINATION, destinationAddress: 'Sarandí y Juan C. Gómez',
@@ -190,6 +240,41 @@ async function main(): Promise<void> {
   info(`desglose: base ${q.breakdown.baseCents / 100} + distancia ${q.breakdown.distanceCents / 100} + tiempo ${q.breakdown.timeCents / 100}`);
   info(`proveedor de ruta: ${q.routeProvider}${q.routeProvider === 'estimate' ? ' (sin MAPBOX_TOKEN, estimación local)' : ''}`);
   check(q.fareCents > 0, 'la tarifa es positiva', 'la tarifa dio 0 o negativa');
+
+  // La geometría solo existe con un proveedor real. Con la estimación local no
+  // hay trazado y eso es correcto, así que la comprobación se condiciona.
+  if (q.routeProvider === 'estimate') {
+    info('sin proveedor real no hay trazado: las apps van a dibujar la recta');
+  } else {
+    check(
+      typeof q.routePolyline === 'string' && q.routePolyline.length > 20,
+      `la cotización trae el trazado (${q.routePolyline?.length ?? 0} caracteres)`,
+      'PROBLEMA: ruta real sin trazado, las apps dibujarían una recta',
+    );
+    // Las maniobras son lo que alimenta el cartel de navegación. Sin ellas la
+    // app dibuja la ruta pero no puede decir dónde girar.
+    const steps = q.routeSteps ?? [];
+    check(
+      steps.length >= 2,
+      `la cotización trae ${steps.length} maniobras`,
+      `PROBLEMA: ruta real con ${steps.length} maniobras, el cartel quedaría mudo`,
+    );
+    // La última maniobra SIEMPRE es la llegada. Si no lo es, se perdió el final
+    // en el camino y el conductor nunca vería «llegaste».
+    check(
+      steps[steps.length - 1]?.type === 'arrive',
+      'la última maniobra es la llegada',
+      `PROBLEMA: la última maniobra es "${steps[steps.length - 1]?.type}" y debería ser "arrive"`,
+    );
+    // lat/lng invertidos es el error clásico con OSRM, y no da ningún error:
+    // pone las maniobras en el golfo de Guinea. Montevideo está en (-34.9, -56.2).
+    const first = steps[0]?.at;
+    check(
+      first !== undefined && first.lat < -30 && first.lat > -40 && first.lng < -50 && first.lng > -60,
+      'las maniobras caen en Uruguay (lat/lng no están invertidas)',
+      `PROBLEMA: la primera maniobra cayó en ${first?.lat}, ${first?.lng}`,
+    );
+  }
 
   // ── 6. La firma protege el monto
   step('Verificando que el monto no se puede falsificar');
@@ -245,6 +330,42 @@ async function main(): Promise<void> {
   const driverToken = driverTokens[winnerIndex] as string;
   pass(`conductor ${winnerIndex + 1} recibió la oferta`);
 
+  // ── 9b. El conductor ofertado puede LEER el viaje antes de aceptar
+  //
+  // Este paso existe por un bug que el smoke no veía: aceptaba llamando a
+  // /accept directo, mientras la app primero hace GET /v1/trips/:id para
+  // mostrar origen, destino y tarifa. Ese GET daba 403 porque el conductor
+  // todavía no es trip.driver_id — se asigna recién al aceptar. Resultado: en
+  // la app el botón Aceptar nunca se habilitaba, y los 18 pasos daban TODO OK.
+  //
+  // La lección: probar el flujo con las mismas llamadas que hace el cliente,
+  // no con el camino más corto al mismo estado.
+  step('Verificando que el conductor ofertado ve el viaje');
+  const offeredDetail = await call<{
+    status: string; fareCents: number | null; routePolyline: string | null;
+  }>('GET', `/v1/trips/${tripId}`, driverToken);
+  if (offeredDetail.status !== 200) {
+    fail(describeError(offeredDetail.status, offeredDetail.body));
+    info('sin esto la pantalla de oferta queda en "Cargando el viaje…" para siempre');
+    process.exit(1);
+  }
+  pass('el conductor con oferta vigente puede leer el viaje');
+
+  // El trazado tiene que haberse COPIADO de la cotización al viaje. Si se
+  // perdiera acá, el preview de la oferta caería a la recta sin avisar.
+  if (q.routeProvider !== 'estimate') {
+    check(
+      typeof offeredDetail.body.routePolyline === 'string',
+      'el trazado se copió de la cotización al viaje',
+      'PROBLEMA: el viaje quedó sin trazado pese a tener ruta real',
+    );
+  }
+
+  // El recíproco NO se puede probar acá: DISPATCH_WAVE_SIZES empieza en 3 y el
+  // seed crea 3 conductores, así que en la ola 1 los tres tienen oferta vigente
+  // y los tres pueden leer el viaje — correctamente. Se verifica después de
+  // aceptar, cuando las ofertas perdedoras quedan en 'superseded'.
+
   // ── 10. Aceptar
   step('Aceptando el viaje');
   const accept = await call<{ tripId: string; commissionBps: number }>(
@@ -256,6 +377,25 @@ async function main(): Promise<void> {
   }
   pass(`aceptado · comisión CONGELADA en ${(accept.body.commissionBps / 100).toFixed(2)} %`);
 
+  // ── 10b. Ruta de acercamiento
+  //
+  // Se calcula DESPUÉS de la transacción de aceptación, así que puede no estar
+  // lista en el instante siguiente. Se le da margen antes de mirar.
+  //
+  // No falla el smoke si no aparece: es best-effort por diseño —un OSRM caído
+  // no puede impedir que un conductor tome un viaje— y en esta corrida el
+  // conductor se puso online con una posición fija, no con GPS real.
+  step('Verificando la ruta de acercamiento al pasajero');
+  await sleep(1500);
+  const afterAccept = await call<{ pickupPolyline: string | null }>(
+    'GET', `/v1/trips/${tripId}`, driverToken,
+  );
+  if (typeof afterAccept.body.pickupPolyline === 'string') {
+    pass(`el conductor tiene trazado hasta el pasajero (${afterAccept.body.pickupPolyline.length} caracteres)`);
+  } else {
+    info('sin ruta de acercamiento: la app cae a la línea recta hasta el origen');
+  }
+
   // ── 11. Un segundo conductor no puede robarlo
   step('Verificando que otro conductor no puede tomar el mismo viaje');
   const other = driverTokens.find((_, i) => i !== winnerIndex);
@@ -265,6 +405,17 @@ async function main(): Promise<void> {
       steal.status === 403 || steal.status === 409,
       `el segundo conductor recibe HTTP ${steal.status}`,
       `PROBLEMA: el segundo conductor pudo aceptar (HTTP ${steal.status})`,
+    );
+    // Y tampoco puede seguir LEYÉNDOLO. El permiso de lectura viene de la
+    // oferta, no del rol: al aceptar uno, las demás quedan 'superseded' y el
+    // acceso se apaga solo. Sin esta comprobación, la excepción que se agregó
+    // en getTripDetail podría degenerar en "cualquier conductor que alguna vez
+    // recibió una oferta puede espiar el viaje para siempre".
+    const spy = await call<{ status?: string }>('GET', `/v1/trips/${tripId}`, other);
+    check(
+      spy.status === 403,
+      'un conductor con oferta ya resuelta deja de ver el viaje (403)',
+      `PROBLEMA: deberia recibir 403 y recibio ${spy.status}`,
     );
   } else {
     info('solo hay un conductor logueado, se saltea');

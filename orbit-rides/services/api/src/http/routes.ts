@@ -138,6 +138,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         origin: { lat: trip.origin_lat, lng: trip.origin_lng, address: trip.origin_address },
         destination: { lat: trip.destination_lat, lng: trip.destination_lng, address: trip.destination_address },
         paymentMethod: trip.payment_method,
+        // El viaje activo es lo primero que carga cada app al abrir con un viaje
+        // en curso. Sin los trazados acá, el mapa dibujaría la recta hasta que
+        // llegue el detalle completo, y se vería un parpadeo.
+        routePolyline: trip.route_polyline,
+        pickupPolyline: trip.pickup_polyline,
+        routeSteps: trip.route_steps ?? [],
+        pickupSteps: trip.pickup_steps ?? [],
         requestedAt: trip.requested_at,
       },
     };
@@ -163,6 +170,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       paymentMethod: trip.payment_method,
       cancellationFeeCents: Number(trip.cancellation_fee_cents),
       canceledBy: trip.canceled_by,
+      // Trazados en polyline6, para que las apps dibujen el camino real y no
+      // una recta entre dos puntos. Pueden ser null: con la estimación local no
+      // hay geometría, y la de acercamiento solo existe después de aceptar.
+      routePolyline: trip.route_polyline,
+      pickupPolyline: trip.pickup_polyline,
+      routeSteps: trip.route_steps ?? [],
+      pickupSteps: trip.pickup_steps ?? [],
       timestamps: {
         requestedAt: trip.requested_at,
         acceptedAt: trip.accepted_at,
@@ -199,7 +213,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/trips/:id/accept', async (request) => {
     const principal = requireRole(request, 'driver');
     const { id } = parse(uuidParam, request.params);
-    const result = await acceptTrip({ tripId: id, driverId: principal.userId });
+    const result = await acceptTrip({ tripId: id, driverId: principal.userId, routing });
     cancelDispatch(id);
     return result;
   });

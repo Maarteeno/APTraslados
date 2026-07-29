@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { humanMessage, type PaymentMethod, type Quote } from '@orbit/client';
+import {
+  decodePolyline, humanMessage, type LatLng, type PaymentMethod, type Quote,
+} from '@orbit/client';
 import { OrbitMap } from '../components/OrbitMap';
 import { Banner, Button, Card, Row } from '../components/ui';
 import { colors, km, minutes, money, radius, space } from '../theme';
@@ -85,17 +87,29 @@ export function QuoteScreen({
 
   const expired = quote !== null && secondsLeft <= 0;
 
+  /**
+   * Recorrido real de la cotización.
+   *
+   * Mientras la cotización no llegó, o si vino de la estimación local, se
+   * dibuja la recta. No es cosmético: la tarifa se calcula sobre la distancia
+   * por calle, así que una recta junto a un precio de ruta real le muestra al
+   * pasajero un trayecto más corto que el que está pagando.
+   */
+  const routeLine: readonly LatLng[] = useMemo(() => {
+    const decoded = decodePolyline(quote?.routePolyline);
+    return decoded.length >= 2 ? decoded : [request.origin, request.destination];
+  }, [quote?.routePolyline, request.origin, request.destination]);
+
   return (
     <View style={styles.wrap}>
       <View style={styles.mapArea}>
         <OrbitMap
           center={request.origin}
-          fitAll
           markers={[
             { id: 'o', position: request.origin, kind: 'origin' },
             { id: 'd', position: request.destination, kind: 'destination' },
           ]}
-          route={[request.origin, request.destination]}
+          route={routeLine}
         />
       </View>
 

@@ -1,5 +1,10 @@
 /** Tipos del contrato con el API. Espejan las respuestas de services/api. */
 
+// RouteStep se define en navigation.ts, junto a la lógica que lo consume, y el
+// index lo reexporta desde allá. Acá solo se importa: reexportarlo también
+// desde este archivo crearía dos caminos para el mismo nombre en el barrel.
+import type { RouteStep } from './navigation';
+
 export interface LatLng {
   readonly lat: number;
   readonly lng: number;
@@ -47,6 +52,14 @@ export interface Quote {
   readonly signature: string;
   /** 'osrm' | 'mapbox' = ruta real. 'estimate' = estimación local. */
   readonly routeProvider: string;
+  /**
+   * Trazado origen→destino en polyline6. Null con la estimación local.
+   *
+   * Decodificar con `decodePolyline`, que ya usa precisión 6 por defecto.
+   */
+  readonly routePolyline: string | null;
+  /** Maniobras de la ruta cotizada. Vacío con la estimación local. */
+  readonly routeSteps: readonly RouteStep[];
   readonly breakdown: FareBreakdown;
 }
 
@@ -73,6 +86,14 @@ export interface Trip {
   readonly paymentMethod: PaymentMethod;
   readonly cancellationFeeCents: number;
   readonly canceledBy: 'rider' | 'driver' | 'system' | null;
+  /** Trazado origen→destino en polyline6. Copiado de la cotización. */
+  readonly routePolyline: string | null;
+  /** Trazado conductor→origen en polyline6. Existe recién después de aceptar. */
+  readonly pickupPolyline: string | null;
+  /** Maniobras del viaje, para el cartel de navegación. */
+  readonly routeSteps: readonly RouteStep[];
+  /** Maniobras hacia el origen. Vacío hasta que el conductor acepta. */
+  readonly pickupSteps: readonly RouteStep[];
   readonly timestamps: {
     readonly requestedAt: string;
     readonly acceptedAt: string | null;
@@ -90,6 +111,10 @@ export interface ActiveTrip {
   readonly origin: LatLng & { readonly address: string | null };
   readonly destination: LatLng & { readonly address: string | null };
   readonly paymentMethod: PaymentMethod;
+  readonly routePolyline: string | null;
+  readonly pickupPolyline: string | null;
+  readonly routeSteps: readonly RouteStep[];
+  readonly pickupSteps: readonly RouteStep[];
   readonly requestedAt: string;
 }
 

@@ -148,7 +148,26 @@ services:
       # Si OSRM está esperando los datos, esto falla y el contenedor queda
       # unhealthy — y eso es correcto, porque no puede rutear. El API no depende
       # de su salud (depends_on: service_started), así que no bloquea nada.
-      test: ["CMD-SHELL", "curl -sf 'http://localhost:5000/route/v1/driving/-56.1553,-34.9112;-56.2044,-34.9066?overview=false' >/dev/null || exit 1"]
+      #
+      # NO usar curl ni wget: la imagen osrm-backend:v5.27.1 no trae ninguno de
+      # los dos. El healthcheck anterior los usaba, salía con código 127 y
+      # marcaba el contenedor unhealthy sin dejar una sola línea en el log de
+      # OSRM — un motor perfectamente sano reportado como enfermo. La pista era
+      # esa: cero peticiones desde localhost en el log pese a un chequeo cada
+      # 15 s.
+      #
+      # /dev/tcp es una función de bash, no de sh, y CMD-SHELL usa sh (dash en
+      # Debian). Por eso se invoca bash explícitamente con CMD.
+      #
+      # Sigue siendo un chequeo funcional y no solo de puerto abierto: pide una
+      # ruta real y exige "code":"Ok". Si el motor está esperando los datos,
+      # responde algo distinto y el contenedor queda unhealthy, que es la
+      # intención original.
+      test:
+        - CMD
+        - bash
+        - '-c'
+        - 'exec 3<>/dev/tcp/127.0.0.1/5000 && printf "GET /route/v1/driving/-56.1553,-34.9112;-56.2044,-34.9066?overview=false HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "\"code\":\"Ok\"" <&3'
       interval: 15s
       timeout: 5s
       retries: 3

@@ -1,6 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { ConflictError, ForbiddenError, humanMessage, type DriverOffer, type Trip } from '@orbit/client';
+import {
+  ConflictError, ForbiddenError, decodePolyline, humanMessage,
+  type DriverOffer, type LatLng, type Trip,
+} from '@orbit/client';
+import { OrbitMap } from '../components/OrbitMap';
 import { Banner, Button, Card, Row } from '../components/ui';
 import { colors, money, space } from '../theme';
 import { useSession } from '../session';
@@ -55,6 +59,20 @@ export function OfferScreen({
     return () => clearInterval(timer);
   }, [offer.expiresAt, onDismiss]);
 
+  /**
+   * Trazado del viaje ofrecido.
+   *
+   * En la oferta se muestra el recorrido origen→destino y no el acercamiento:
+   * el acercamiento todavía no existe —se calcula al aceptar— y además lo que
+   * el conductor está decidiendo acá es si le sirve ESE viaje. Para eso importa
+   * hacia dónde lo lleva, no cómo llega a buscarlo.
+   */
+  const preview: readonly LatLng[] = useMemo(() => {
+    if (!trip) return [];
+    const decoded = decodePolyline(trip.routePolyline);
+    return decoded.length >= 2 ? decoded : [trip.origin, trip.destination];
+  }, [trip]);
+
   const accept = async (): Promise<void> => {
     setBusy(true);
     setError(null);
@@ -97,6 +115,25 @@ export function OfferScreen({
       </View>
 
       {error && <Banner text={error} tone="bad" />}
+
+      {/*
+        Preview del recorrido.
+        Alto fijo y no `flex: 1`: la oferta dura quince segundos y lo que no
+        puede pasar es que el mapa empuje el botón Aceptar fuera de pantalla.
+      */}
+      {trip && preview.length >= 2 && (
+        <View style={styles.mapBox}>
+          <OrbitMap
+            center={trip.origin}
+            fitPadding={28}
+            markers={[
+              { id: 'o', position: trip.origin, kind: 'origin' },
+              { id: 'd', position: trip.destination, kind: 'destination' },
+            ]}
+            route={preview}
+          />
+        </View>
+      )}
 
       <Card>
         <Text style={styles.label}>VIAJE NUEVO</Text>
@@ -146,6 +183,7 @@ const styles = StyleSheet.create({
   timerLabel: { color: colors.dim, fontSize: 12 },
   bar: { height: 5, backgroundColor: colors.line, borderRadius: 3, width: '100%', overflow: 'hidden', marginTop: space.sm },
   barFill: { height: '100%', backgroundColor: colors.warn },
+  mapBox: { height: 180, borderRadius: 14, overflow: 'hidden' },
   label: { color: colors.dim2, fontSize: 10, fontWeight: '700', letterSpacing: 0.8, marginBottom: space.sm },
   address: { color: colors.ink, fontSize: 15, fontWeight: '600', lineHeight: 21 },
   arrow: { color: colors.dim2, fontSize: 16, marginVertical: space.xs },

@@ -20,16 +20,19 @@ import {
 } from '@orbit/domain';
 import { loadConfig } from '../config/index.js';
 import { withTransaction, type Queryable } from '../db/pool.js';
-import { closeOffer, releaseDriverLock } from '../db/redis.js';
+import { closeOffer, getDriverPosition, releaseDriverLock } from '../db/redis.js';
 import {
   BadRequestError, ConflictError, ForbiddenError, GoneError, UnprocessableError,
 } from '../lib/errors.js';
+import { logger } from '../lib/logger.js';
+import type { RoutingProvider } from '../lib/routing.js';
 import { getActivePricing } from './cities.repo.js';
 import { getDriverCommission } from './drivers.repo.js';
 import { consumeQuote, getQuote } from './quotes.repo.js';
 import { postTransaction } from './ledger.repo.js';
 import {
-  appendEvent, assignDriver, getTripForUpdate, listEvents, resolveOffer, updateStatus, createTrip,
+  appendEvent, assignDriver, getTrip, getTripForUpdate, listEvents, resolveOffer,
+  setPickupRoute, updateStatus, createTrip,
   type TripRow,
 } from './trips.repo.js';
 import { publish } from '../ws/hub.js';
@@ -104,6 +107,11 @@ export async function requestTrip(input: RequestTripInput): Promise<{ tripId: st
       destinationAddress: quote.destination_address,
       currency: quote.currency,
       paymentMethod: input.paymentMethod,
+      // El trazado no está firmado, así que se toma de la columna y no del
+      // payload. No hace falta protegerlo: alterarlo no cambia lo que se cobra,
+      // solo dibujaría una línea equivocada.
+      routePolyline: quote.route_polyline,
+      routeSteps: quote.route_steps,
       quotedRoute: {
         distanceMeters: signed.payload.distanceMeters,
         durationSeconds: signed.payload.durationSeconds,
@@ -137,6 +145,14 @@ export async function startMatching(tripId: string): Promise<void> {
 export interface AcceptTripInput {
   readonly tripId: string;
   readonly driverId: string;
+  /**
+   * Se inyecta igual que en createQuote, en vez de importarlo acá.
+   *
+   * El proveedor se arma una vez con la config en la capa HTTP; el servicio no
+   * decide si hay OSRM, Mapbox o estimación local. Además así los tests pueden
+   * pasar un doble sin levantar red.
+   */
+  readonly routing: RoutingProvider;
 }
 
 /**
@@ -185,11 +201,47 @@ export async function acceptTrip(input: AcceptTripInput): Promise<{ tripId: stri
   });
 
   await closeOffer(input.tripId, input.driverId);
+  await storePickupRoute(input.tripId, input.driverId, input.routing);
   publish('trip', input.tripId, 'trip.accepted', {
     tripId: input.tripId,
     driverId: input.driverId,
   });
   return result;
+}
+
+/**
+ * Calcula y guarda el camino del conductor hacia el origen.
+ *
+ * Es lo que el conductor necesita ver apenas acepta: no el trayecto del viaje,
+ * sino cómo llegar a buscar al pasajero.
+ *
+ * Best-effort, y adrede:
+ *
+ *  - Corre DESPUÉS de la transacción de aceptación. Meter una llamada de red
+ *    dentro de la transacción que hace `FOR UPDATE` sobre el viaje significaría
+ *    que un OSRM lento bloquea a todos los que toquen esa fila.
+ *  - Cualquier fallo se registra y se sigue. El viaje ya está aceptado y eso es
+ *    lo que importa; sin trazado la app dibuja la línea recta, que es peor pero
+ *    sirve. Un proveedor de mapas caído no puede deshacer una asignación.
+ */
+async function storePickupRoute(
+  tripId: string, driverId: string, routing: RoutingProvider,
+): Promise<void> {
+  try {
+    const position = await getDriverPosition(driverId);
+    if (!position) {
+      logger.info({ tripId, driverId }, 'sin posición del conductor, no hay ruta de acercamiento');
+      return;
+    }
+    const trip = await withTransaction((tx) => getTrip(tx, tripId));
+    const route = await routing.route(
+      { lat: position.lat, lng: position.lng },
+      { lat: trip.origin_lat, lng: trip.origin_lng },
+    );
+    await withTransaction((tx) => setPickupRoute(tx, tripId, route.polyline, route.steps));
+  } catch (err) {
+    logger.warn({ err, tripId }, 'no se pudo calcular la ruta de acercamiento');
+  }
 }
 
 export async function rejectOffer(tripId: string, driverId: string): Promise<void> {
@@ -401,7 +453,25 @@ export async function getTripDetail(tripId: string, requesterId: string, isStaff
   return withTransaction(async (tx) => {
     const trip = await getTripForUpdate(tx, tripId);
     if (!isStaff && trip.rider_id !== requesterId && trip.driver_id !== requesterId) {
-      throw new ForbiddenError('no participás de este viaje');
+      // Un conductor con OFERTA VIGENTE todavía no es trip.driver_id: eso se
+      // asigna recién al aceptar. Pero necesita ver origen, destino y tarifa
+      // para decidir, y la oferta que le llega por WebSocket solo trae tripId,
+      // ETA y distancia.
+      //
+      // Sin esta excepción la pantalla de oferta recibía 403, se quedaba en
+      // "Cargando el viaje…" y el botón Aceptar nunca se habilitaba: el
+      // conductor no podía tomar un viaje desde la app. El smoke no lo detectó
+      // porque llama a acceptTrip directo, sin pasar por getTrip.
+      //
+      // Mismo criterio que acceptTrip: oferta sin resolver y sin vencer. El
+      // acceso dura lo que dura la oferta y es exclusivo de esa ola, así que no
+      // abre el viaje a cualquier conductor.
+      const { rows } = await tx.query<{ id: string }>(
+        `SELECT id FROM trip_offers
+          WHERE trip_id = $1 AND driver_id = $2 AND outcome IS NULL AND expires_at > now()`,
+        [tripId, requesterId],
+      );
+      if (!rows[0]) throw new ForbiddenError('no participás de este viaje');
     }
     const events = await listEvents(tx, tripId);
     return { trip, events };

@@ -2,13 +2,13 @@
   "expo": {
     "name": "Orbit Rides",
     "slug": "orbit-rider",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "orbitrider",
     "android": {
       "package": "com.orbitrides.rider",
-      "versionCode": 1,
+      "versionCode": 2,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

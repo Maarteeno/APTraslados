@@ -34,6 +34,10 @@ export interface CreateQuoteResult {
   readonly expiresAt: string;
   readonly signature: string;
   readonly routeProvider: string;
+  /** Trazado real en polyline6, o null si se estimó localmente. */
+  readonly routePolyline: string | null;
+  /** Maniobras para el cartel de navegación. Vacío con la estimación local. */
+  readonly routeSteps: unknown;
   readonly breakdown: {
     baseCents: number;
     distanceCents: number;
@@ -100,6 +104,9 @@ export async function createQuote(
       // El JSON exacto que se firmó. Al canjear se verifica contra este texto,
       // sin re-derivar el payload desde las columnas normalizadas.
       signedPayload: JSON.stringify(payload),
+      // Fuera de la firma: es dato de presentación, no de precio.
+      routePolyline: route.polyline,
+      routeSteps: route.steps,
       expiresAt: new Date(expiresAtMs),
     });
 
@@ -114,6 +121,8 @@ export async function createQuote(
       expiresAt: new Date(expiresAtMs).toISOString(),
       signature: signed.signature,
       routeProvider: route.provider,
+      routePolyline: route.polyline,
+      routeSteps: route.steps,
       breakdown: {
         baseCents: fare.baseCents,
         distanceCents: fare.distanceCents,

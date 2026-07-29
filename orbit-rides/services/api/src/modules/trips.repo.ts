@@ -25,6 +25,14 @@ export interface TripRow {
   cancellation_fee_cents: string;
   canceled_by: Actor | null;
   cancel_reason: string | null;
+  /** Trazado origen→destino en polyline6. Copiado de la cotización. */
+  route_polyline: string | null;
+  /** Trazado conductor→origen en polyline6. Se calcula al aceptar. */
+  pickup_polyline: string | null;
+  /** Maniobras del viaje. JSONB, ya parseado por pg. */
+  route_steps: unknown;
+  /** Maniobras hacia el origen. */
+  pickup_steps: unknown;
   requested_at: Date;
   accepted_at: Date | null;
   arrived_at: Date | null;
@@ -42,6 +50,7 @@ const SELECT_TRIP = `
          destination_address,
          fare_cents, currency, commission_bps, commission_cents, driver_earnings_cents,
          payment_method, cancellation_fee_cents, canceled_by, cancel_reason,
+         route_polyline, pickup_polyline, route_steps, pickup_steps,
          requested_at, accepted_at, arrived_at, started_at, completed_at
     FROM trips`;
 
@@ -71,6 +80,15 @@ export interface CreateTripInput {
   readonly currency: CurrencyCode;
   readonly paymentMethod: 'cash' | 'card' | 'wallet';
   readonly quotedRoute: unknown;
+  /**
+   * Trazado de la cotización, en polyline6.
+   *
+   * Se COPIA en vez de leerse por join contra quotes: el viaje es el registro
+   * histórico, y si algún día se purgan cotizaciones viejas por retención de
+   * datos, el viaje tiene que seguir sabiendo qué camino se recorrió.
+   */
+  readonly routePolyline: string | null;
+  readonly routeSteps: unknown;
 }
 
 export async function createTrip(tx: Queryable, input: CreateTripInput): Promise<string> {
@@ -78,17 +96,18 @@ export async function createTrip(tx: Queryable, input: CreateTripInput): Promise
     const { rows } = await tx.query<{ id: string }>(
       `INSERT INTO trips (city_id, rider_id, quote_id, status,
                           origin, origin_address, destination, destination_address,
-                          currency, payment_method, quoted_route)
+                          currency, payment_method, quoted_route, route_polyline, route_steps)
        VALUES ($1, $2, $3, 'REQUESTED',
                ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6,
                ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9,
-               $10, $11, $12)
+               $10, $11, $12, $13, $14)
        RETURNING id`,
       [
         input.cityId, input.riderId, input.quoteId,
         input.origin.lng, input.origin.lat, input.originAddress,
         input.destination.lng, input.destination.lat, input.destinationAddress,
         input.currency, input.paymentMethod, JSON.stringify(input.quotedRoute),
+        input.routePolyline, JSON.stringify(input.routeSteps ?? []),
       ],
     );
     const row = rows[0];
@@ -177,6 +196,23 @@ export async function assignDriver(tx: Queryable, input: AssignDriverInput): Pro
     }
     throw err;
   }
+}
+
+/**
+ * Guarda el trazado del conductor hacia el origen.
+ *
+ * Va fuera de la transacción de aceptación a propósito: pedirle una ruta a OSRM
+ * dentro de la transacción que asigna el viaje mantendría abierto un `FOR
+ * UPDATE` sobre la fila durante una llamada de red. Un OSRM lento bloquearía a
+ * cualquiera que toque ese viaje. El trazado es cosmético; la asignación no.
+ */
+export async function setPickupRoute(
+  tx: Queryable, tripId: string, polyline: string | null, steps: unknown,
+): Promise<void> {
+  await tx.query(
+    `UPDATE trips SET pickup_polyline = $2, pickup_steps = $3, updated_at = now() WHERE id = $1`,
+    [tripId, polyline, JSON.stringify(steps ?? [])],
+  );
 }
 
 export async function recordOffers(

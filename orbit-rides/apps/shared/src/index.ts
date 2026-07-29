@@ -4,3 +4,5 @@ export * from './storage';
 export * from './http';
 export * from './api';
 export * from './ws';
+export * from './polyline';
+export * from './navigation';

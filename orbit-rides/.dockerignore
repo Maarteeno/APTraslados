@@ -18,3 +18,19 @@ docs
 infra
 *.md
 !README.md
+
+# Artefactos nativos de las apps. `expo prebuild` genera apps/*/android/ y con
+# el cache de Gradle adentro pesa mas de 1.6 GB. La imagen del API no usa nada
+# de eso, pero Docker igual lo manda entero al daemon: el contexto paso de
+# 833 kB a 1.6 GB y subiendo, con un `docker compose build api` que antes
+# tardaba segundos.
+#
+# Se regenera solo con `expo prebuild`, asi que tampoco hay que versionarlo.
+apps/*/android
+apps/*/ios
+apps/*/.expo
+**/.gradle
+**/.cxx
+**/*.apk
+**/*.aab
+**/*.keystore

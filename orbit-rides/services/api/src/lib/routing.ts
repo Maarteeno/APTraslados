@@ -18,6 +18,36 @@ export interface RouteResult {
   readonly durationSeconds: number;
   readonly provider: RouteProviderName;
   readonly polyline: string | null;
+  readonly steps: readonly RouteStep[];
+}
+
+/**
+ * Una maniobra de la ruta, normalizada.
+ *
+ * Es un subconjunto deliberado de lo que devuelve OSRM. Se guardan solo los
+ * campos que la app usa para el cartel de navegación; el resto —geometría por
+ * paso, intersecciones, `bearing_before`— multiplica el tamaño de lo que viaja
+ * al cliente y no se dibuja en ningún lado.
+ *
+ * `type` y `modifier` se dejan CRUDOS, con los nombres de OSRM. La traducción a
+ * castellano vive en el cliente, junto al texto que se muestra: si el día de
+ * mañana se cambia de proveedor de ruteo, se adapta el mapeo en un solo archivo
+ * y el contrato del API no se mueve.
+ */
+export interface RouteStep {
+  /** Largo del tramo que TERMINA en esta maniobra, en metros. */
+  readonly distanceMeters: number;
+  readonly durationSeconds: number;
+  /** Nombre de la calle por la que se sigue después de la maniobra. */
+  readonly name: string;
+  /** `turn`, `new name`, `roundabout`, `arrive`… tal cual los nombra OSRM. */
+  readonly type: string;
+  /** `left`, `slight right`, `straight`… o null cuando la maniobra no lo tiene. */
+  readonly modifier: string | null;
+  /** Dónde ocurre la maniobra. */
+  readonly at: LatLng;
+  /** Salida de la rotonda, cuando aplica. */
+  readonly exit: number | null;
 }
 
 /** Duración desde un origen hacia varios destinos, en segundos. */
@@ -54,7 +84,9 @@ export class EstimateRoutingProvider implements RoutingProvider {
     const straight = haversineMeters(origin, destination);
     const distanceMeters = Math.round(straight * this.sinuosityFactor);
     const durationSeconds = Math.max(60, Math.round(distanceMeters / this.averageSpeedMps));
-    return { distanceMeters, durationSeconds, provider: 'estimate', polyline: null };
+    // Sin geometría no hay maniobras que dar: inventar «seguí derecho» sobre una
+    // recta estimada sería peor que no decir nada.
+    return { distanceMeters, durationSeconds, provider: 'estimate', polyline: null, steps: [] };
   }
 
   async matrix(sources: readonly LatLng[], destination: LatLng): Promise<MatrixResult> {
@@ -64,6 +96,54 @@ export class EstimateRoutingProvider implements RoutingProvider {
     });
     return { provider: 'estimate', durationsSeconds };
   }
+}
+
+/** Forma cruda de un paso de OSRM. Solo los campos que se usan. */
+interface OsrmStep {
+  distance?: number;
+  duration?: number;
+  name?: string;
+  maneuver?: {
+    type?: string;
+    modifier?: string;
+    exit?: number;
+    location?: [number, number];
+  };
+}
+
+/**
+ * Pasa los pasos de OSRM a nuestra forma.
+ *
+ * Se aplanan las `legs` porque nuestras rutas nunca tienen paradas intermedias:
+ * siempre son origen→destino, así que hay una sola leg. Aplanar en vez de tomar
+ * `legs[0]` cuesta lo mismo y no se rompe si algún día se agregan paradas.
+ *
+ * Los pasos sin `location` se descartan: sin el punto de la maniobra no se
+ * puede ubicar sobre el trazado, y un cartel que no sabe dónde aparecer es peor
+ * que ningún cartel.
+ */
+function normalizeSteps(legs: ReadonlyArray<{ steps?: OsrmStep[] }>): RouteStep[] {
+  const out: RouteStep[] = [];
+  for (const leg of legs) {
+    for (const step of leg.steps ?? []) {
+      const location = step.maneuver?.location;
+      if (!location || location.length < 2) continue;
+      const [lng, lat] = location;
+      if (typeof lng !== 'number' || typeof lat !== 'number') continue;
+      out.push({
+        distanceMeters: Math.round(step.distance ?? 0),
+        durationSeconds: Math.round(step.duration ?? 0),
+        name: step.name ?? '',
+        type: step.maneuver?.type ?? 'continue',
+        modifier: step.maneuver?.modifier ?? null,
+        // OSRM manda lon,lat. Invertirlo acá pone todas las maniobras en el
+        // océano sin ningún error, igual que en `coord`.
+        at: { lat, lng },
+        exit: step.maneuver?.exit ?? null,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -91,14 +171,26 @@ export class OsrmRoutingProvider implements RoutingProvider {
   async route(origin: LatLng, destination: LatLng): Promise<RouteResult> {
     const url =
       `${this.baseUrl}/route/v1/driving/${this.coord(origin)};${this.coord(destination)}` +
-      `?overview=simplified&geometries=polyline6&alternatives=false&steps=false`;
+      // steps=true trae las maniobras para el cartel de navegación. Encarece la
+      // respuesta, pero se pide UNA vez por viaje —al cotizar y al aceptar—, no
+      // en cada actualización de posición, así que el costo es despreciable
+      // frente a /table, que es la llamada que sí escala.
+      //
+      // La geometría sigue en `simplified`: `full` multiplica los puntos por
+      // varias veces para un dibujo que a escala de pantalla se ve igual.
+      `?overview=simplified&geometries=polyline6&alternatives=false&steps=true`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
     if (!res.ok) throw new RoutingError(`OSRM devolvió ${res.status}`);
 
     const body = (await res.json()) as {
       code?: string;
-      routes?: Array<{ distance: number; duration: number; geometry?: string }>;
+      routes?: Array<{
+        distance: number;
+        duration: number;
+        geometry?: string;
+        legs?: Array<{ steps?: OsrmStep[] }>;
+      }>;
     };
     if (body.code !== 'Ok') throw new RoutingError(`OSRM: code=${body.code ?? 'ausente'}`);
 
@@ -110,6 +202,7 @@ export class OsrmRoutingProvider implements RoutingProvider {
       durationSeconds: Math.round(route.duration),
       provider: 'osrm',
       polyline: route.geometry ?? null,
+      steps: normalizeSteps(route.legs ?? []),
     };
   }
 
@@ -164,13 +257,18 @@ export class MapboxRoutingProvider implements RoutingProvider {
     const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
     const url =
       `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}` +
-      `?geometries=polyline6&overview=simplified&access_token=${this.token}`;
+      `?geometries=polyline6&overview=simplified&steps=true&access_token=${this.token}`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) throw new RoutingError(`Mapbox devolvió ${res.status}`);
 
     const body = (await res.json()) as {
-      routes?: Array<{ distance: number; duration: number; geometry?: string }>;
+      routes?: Array<{
+        distance: number;
+        duration: number;
+        geometry?: string;
+        legs?: Array<{ steps?: OsrmStep[] }>;
+      }>;
     };
     const route = body.routes?.[0];
     if (!route) throw new RoutingError('Mapbox no devolvió ninguna ruta');
@@ -180,6 +278,9 @@ export class MapboxRoutingProvider implements RoutingProvider {
       durationSeconds: Math.round(route.duration),
       provider: 'mapbox',
       polyline: route.geometry ?? null,
+      // Mapbox Directions desciende de OSRM y comparte la forma de los pasos,
+      // así que el mismo normalizador sirve para los dos.
+      steps: normalizeSteps(route.legs ?? []),
     };
   }
 

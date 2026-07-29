@@ -59,6 +59,32 @@ conexiones y fallan con `ECONNREFUSED`. Después el smoke da
 
 Corré `docker compose ps`, confirmá `healthy`, y recién ahí migrate y seed.
 
+### El mapa negro del conductor: ya no pasa
+
+En la máquina nueva **el mapa de la app de conductor dibuja bien**. No hubo que
+tocar `OrbitMap.tsx`: el arreglo de cámara que ya estaba commiteado
+—`initialViewState` fijo y los movimientos por el ref— era correcto, y lo que
+fallaba era el entorno anterior. El AVD de esta máquina usa GPU por hardware
+sobre una RTX 3090; el emulador viejo tiraba `EGL_BAD_MATCH`.
+
+Vale la pena registrar el costo del método: se probaron cuatro configuraciones
+de cámara adivinando, cuando el primer paso barato —un componente MapLibre
+mínimo para separar "mi código" de "el entorno"— habría señalado el entorno en
+diez minutos.
+
+### El conductor no podía aceptar viajes, y el smoke decía TODO OK
+
+`getTripDetail` solo autorizaba al pasajero, al conductor YA ASIGNADO y a staff.
+Un conductor con oferta vigente todavía no es `trip.driver_id` —eso se asigna al
+aceptar—, así que el `GET /v1/trips/:id` que hace la pantalla de oferta devolvía
+403, la tarjeta quedaba en «Cargando el viaje…» y el botón Aceptar nunca se
+habilitaba.
+
+El smoke no lo veía porque llamaba a `/accept` directo, sin pasar por `getTrip`.
+Mismo estado final, camino distinto al del cliente real. Ahora el smoke recorre
+las mismas llamadas que hace la app, y verifica también que el permiso se apague
+cuando la oferta se resuelve.
+
 ### Ruido de CRLF: resuelto de raíz
 
 Se agregó `.gitattributes` en la raíz de APTraslados, no solo en `orbit-rides/`.

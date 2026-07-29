@@ -19,6 +19,8 @@ export interface QuoteRow {
   currency: CurrencyCode;
   signature: string;
   signed_payload: string | null;
+  route_polyline: string | null;
+  route_steps: unknown;
   expires_at: Date;
   consumed_at: Date | null;
 }
@@ -47,6 +49,15 @@ export interface InsertQuoteInput {
   readonly signature: string;
   /** JSON exacto que se firmó. Se verifica contra este texto, sin re-derivar. */
   readonly signedPayload: string;
+  /**
+   * Trazado en polyline6, o null si el proveedor fue la estimación local.
+   *
+   * No entra en el payload firmado a propósito: no interviene en el precio, y
+   * agregarlo invalidaría las cotizaciones ya emitidas en cada despliegue.
+   */
+  readonly routePolyline: string | null;
+  /** Maniobras de la ruta. Se serializa a JSONB. */
+  readonly routeSteps: unknown;
   readonly expiresAt: Date;
 }
 
@@ -54,11 +65,11 @@ export async function insertQuote(tx: Queryable, input: InsertQuoteInput): Promi
   const { rows } = await tx.query<{ id: string }>(
     `INSERT INTO quotes (id, rider_id, city_id, origin, origin_address, destination, destination_address,
                          distance_meters, duration_seconds, surge_multiplier, fare_cents, currency,
-                         breakdown, signature, signed_payload, expires_at)
+                         breakdown, signature, signed_payload, route_polyline, route_steps, expires_at)
      VALUES ($1, $2, $3,
              ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6,
              ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9,
-             $10, $11, $12, $13, $14, $15, $16, $17, $18)
+             $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
      RETURNING id`,
     [
       input.id, input.riderId, input.cityId,
@@ -66,7 +77,8 @@ export async function insertQuote(tx: Queryable, input: InsertQuoteInput): Promi
       input.destination.lng, input.destination.lat, input.destinationAddress,
       input.distanceMeters, input.durationSeconds, input.surgeMultiplier,
       input.fareCents, input.currency, JSON.stringify(input.breakdown),
-      input.signature, input.signedPayload, input.expiresAt,
+      input.signature, input.signedPayload, input.routePolyline,
+      JSON.stringify(input.routeSteps ?? []), input.expiresAt,
     ],
   );
   const row = rows[0];
@@ -83,7 +95,8 @@ const SELECT_QUOTE = `
          ST_X(destination::geometry) AS destination_lng,
          destination_address,
          distance_meters, duration_seconds, surge_multiplier,
-         fare_cents, currency, signature, signed_payload, expires_at, consumed_at
+         fare_cents, currency, signature, signed_payload, route_polyline, route_steps,
+         expires_at, consumed_at
     FROM quotes`;
 
 export async function getQuote(tx: Queryable, quoteId: string): Promise<QuoteRow> {

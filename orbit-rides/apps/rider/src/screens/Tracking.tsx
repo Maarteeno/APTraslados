@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
-  TripSocket, humanMessage,
-  type Settlement, type SocketMessage, type SocketState, type Trip, type TripStatus,
+  TripSocket, decodePolyline, humanMessage,
+  type LatLng, type Settlement, type SocketMessage, type SocketState, type Trip, type TripStatus,
 } from '@orbit/client';
 import { OrbitMap } from '../components/OrbitMap';
 import { Banner, Button, Card } from '../components/ui';
@@ -116,18 +116,52 @@ export function TrackingScreen({
   const cancelable = status === 'REQUESTED' || status === 'MATCHING' || status === 'ACCEPTED' || status === 'ARRIVED';
   const chargeableCancel = status === 'ACCEPTED' || status === 'ARRIVED';
 
+  /**
+   * Qué recorrido ve el pasajero según el momento.
+   *
+   * Mientras el conductor viene a buscarlo, lo que le interesa es por dónde
+   * viene, no el viaje que todavía no empezó. Ese trazado aparece recién cuando
+   * el conductor acepta; antes no existe y se muestra el del viaje.
+   */
+  const waitingForPickup = trip?.status === 'ACCEPTED' || trip?.status === 'ARRIVED';
+
+  const routeLine: readonly LatLng[] = useMemo(() => {
+    if (!trip) return [];
+    const decoded = decodePolyline(waitingForPickup ? trip.pickupPolyline : trip.routePolyline);
+    if (decoded.length >= 2) return decoded;
+    // Si el de acercamiento no existe, el del viaje sigue siendo mejor que nada.
+    const fallback = decodePolyline(trip.routePolyline);
+    return fallback.length >= 2 ? fallback : [trip.origin, trip.destination];
+  }, [trip, waitingForPickup]);
+
+  /**
+   * El viaje en tenue mientras el conductor viene.
+   *
+   * El pasajero ve las dos cosas a la vez: por dónde viene el auto —brillante,
+   * que es lo que está esperando— y para dónde lo va a llevar después. Es la
+   * misma información que ve el conductor, que era el pedido.
+   */
+  const contextLine: readonly LatLng[] = useMemo(() => {
+    if (!trip || !waitingForPickup) return [];
+    const decoded = decodePolyline(trip.routePolyline);
+    return decoded.length >= 2 ? decoded : [trip.origin, trip.destination];
+  }, [trip, waitingForPickup]);
+
   return (
     <View style={styles.wrap}>
       <View style={styles.mapArea}>
         {trip && (
           <OrbitMap
             center={trip.origin}
-            fitAll
+            // La hoja inferior flota sobre el mapa: sin margen, el trazado
+            // queda escondido detrás de la tarjeta de estado.
+            fitPadding={56}
             markers={[
               { id: 'o', position: trip.origin, kind: 'origin' },
               { id: 'd', position: trip.destination, kind: 'destination' },
             ]}
-            route={[trip.origin, trip.destination]}
+            route={routeLine}
+            contextRoute={contextLine}
           />
         )}
       </View>

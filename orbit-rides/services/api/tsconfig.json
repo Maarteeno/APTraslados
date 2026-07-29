@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "composite": true,
+    "types": ["node"],
+
+    // Resolución explícita de @orbit/domain a las declaraciones que emite el
+    // proyecto referenciado.
+    //
+    // Sin esto, tsc depende del symlink que npm crea en
+    // node_modules/@orbit/domain. Ese link es frágil: si se genera en un
+    // sistema y se usa en otro (por ejemplo instalar en Linux y compilar en
+    // Windows), queda en un formato que el otro no puede seguir, y el build
+    // falla con 18 "Cannot find module '@orbit/domain'" que no dicen nada
+    // sobre la causa real.
+    //
+    // Con `paths`, la compilación depende solo de la referencia de proyecto,
+    // que es determinista. El symlink sigue haciendo falta para EJECUTAR
+    // (node resuelve el especificador desnudo en runtime), pero ya no para
+    // compilar ni para correr los tests (vitest tiene su propio alias).
+    "paths": {
+      "@orbit/domain": ["../../packages/domain/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  "references": [{ "path": "../../packages/domain" }]
+}

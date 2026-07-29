@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit Rides — Prototipo de flujo de pasajero</title>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111726; --panel2:#161d30; --line:#232c45;
+    --ink:#e8ecf7; --dim:#8a94ad; --dim2:#5b6480;
+    --brand:#6c5cff; --brand2:#00d4ff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --map:#131a2b; --road:#222b44; --road2:#2c3a5c; --water:#0d2137;
+    --font:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+       display:flex;gap:28px;padding:28px;min-height:100vh;justify-content:center;
+       align-items:flex-start;flex-wrap:wrap}
+
+  /* ── Phone ─────────────────────────────────────────── */
+  .phone{width:390px;height:800px;background:#000;border-radius:44px;padding:11px;
+         box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 0 1px #262d42;flex:0 0 auto;position:relative}
+  .screen{width:100%;height:100%;background:var(--map);border-radius:34px;overflow:hidden;
+          position:relative;display:flex;flex-direction:column}
+  .notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:120px;height:26px;
+         background:#000;border-radius:0 0 16px 16px;z-index:60}
+
+  /* ── Top bar ───────────────────────────────────────── */
+  .topbar{position:absolute;top:0;left:0;right:0;z-index:40;padding:44px 16px 12px;
+          display:flex;align-items:center;gap:10px;
+          background:linear-gradient(180deg,rgba(10,14,26,.94) 0%,rgba(10,14,26,.6) 70%,transparent 100%)}
+  .logo{display:flex;align-items:center;gap:8px;font-weight:800;letter-spacing:-.3px;font-size:16px}
+  .orb{width:22px;height:22px;border-radius:50%;position:relative;
+       background:radial-gradient(circle at 32% 30%,var(--brand2),var(--brand) 70%);
+       box-shadow:0 0 14px rgba(108,92,255,.7)}
+  .orb::after{content:'';position:absolute;inset:-5px -8px;border-radius:50%;
+              border:1.5px solid rgba(0,212,255,.55);transform:rotate(-24deg)}
+  .badge{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.5px;
+         padding:4px 9px;border-radius:20px;background:rgba(108,92,255,.18);
+         color:#b9b2ff;border:1px solid rgba(108,92,255,.4)}
+
+  /* ── Map ───────────────────────────────────────────── */
+  .maparea{position:absolute;inset:0}
+  svg.map{width:100%;height:100%;display:block}
+  .carg{transition:transform .9s cubic-bezier(.4,0,.2,1)}
+  .car rect{fill:#e8ecf7}
+  .car.busy rect{fill:var(--dim2)}
+  .car.offered rect{fill:var(--warn)}
+  .car.mine rect{fill:var(--brand2)}
+  .ring{fill:none;stroke:var(--warn);stroke-width:1.6;opacity:0}
+  .ring.on{animation:pulse 1.5s ease-out infinite}
+  @keyframes pulse{0%{r:8;opacity:.9}100%{r:30;opacity:0}}
+  .pin{transition:transform .5s cubic-bezier(.2,1.4,.4,1)}
+  .route{fill:none;stroke:var(--brand2);stroke-width:3.5;stroke-linecap:round;
+         filter:drop-shadow(0 0 8px rgba(0,212,255,.55));
+         stroke-dasharray:1000;stroke-dashoffset:1000;transition:stroke-dashoffset 1.1s ease}
+  .route.on{stroke-dashoffset:0}
+  .route.pickup{stroke:var(--warn);stroke-width:2.6;stroke-dasharray:7 6;
+                filter:none;animation:march 1s linear infinite}
+  @keyframes march{to{stroke-dashoffset:-13}}
+
+  /* ── Bottom sheet ──────────────────────────────────── */
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:50;background:var(--panel);
+         border-radius:26px 26px 34px 34px;padding:8px 18px 22px;
+         box-shadow:0 -14px 44px rgba(0,0,0,.6);border-top:1px solid var(--line);
+         transition:transform .35s cubic-bezier(.3,1,.35,1)}
+  .grip{width:38px;height:4px;border-radius:4px;background:var(--line);margin:6px auto 14px}
+  .sheet h2{margin:0 0 4px;font-size:17px;letter-spacing:-.3px}
+  .sheet p.sub{margin:0 0 14px;font-size:12.5px;color:var(--dim);line-height:1.45}
+
+  .field{display:flex;align-items:center;gap:11px;background:var(--panel2);
+         border:1px solid var(--line);border-radius:13px;padding:12px 13px;margin-bottom:9px;
+         cursor:pointer;transition:border-color .2s,background .2s}
+  .field:hover{border-color:#33406a;background:#1a2236}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .dot.o{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.16)}
+  .dot.d{background:var(--brand2);box-shadow:0 0 0 3px rgba(0,212,255,.16)}
+  .dot.sq{border-radius:2px}
+  .field .txt{flex:1;min-width:0}
+  .field .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim2);font-weight:700}
+  .field .val{font-size:13.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .field .val.ph{color:var(--dim2)}
+
+  .btn{width:100%;border:0;border-radius:14px;padding:15px;font-size:15px;font-weight:700;
+       font-family:var(--font);color:#fff;cursor:pointer;letter-spacing:-.2px;
+       background:linear-gradient(100deg,var(--brand),#8b5cf6 55%,var(--brand2));
+       box-shadow:0 8px 22px rgba(108,92,255,.35);transition:transform .12s,filter .2s}
+  .btn:hover{filter:brightness(1.09)} .btn:active{transform:scale(.985)}
+  .btn.ghost{background:var(--panel2);border:1px solid var(--line);box-shadow:none;color:var(--ink)}
+  .btn.sm{padding:11px;font-size:13px}
+  .btn.danger{background:var(--panel2);border:1px solid #5b2b33;color:#ff9aa5;box-shadow:none}
+  .btnrow{display:flex;gap:9px;margin-top:9px}
+
+  .plist{max-height:296px;overflow:auto;margin:0 -4px}
+  .place{display:flex;gap:12px;align-items:center;padding:11px 10px;border-radius:11px;
+         cursor:pointer;transition:background .15s}
+  .place:hover{background:var(--panel2)}
+  .place .ic{width:34px;height:34px;border-radius:10px;background:var(--panel2);
+             border:1px solid var(--line);display:grid;place-items:center;font-size:15px;flex:0 0 auto}
+  .place .nm{font-size:13.5px;font-weight:600}
+  .place .ad{font-size:11px;color:var(--dim2);margin-top:1px}
+  .place .km{margin-left:auto;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+  .quote{background:var(--panel2);border:1px solid var(--line);border-radius:15px;
+         padding:14px;margin-bottom:11px}
+  .qtop{display:flex;align-items:flex-end;gap:9px;margin-bottom:11px}
+  .qprice{font-size:31px;font-weight:800;letter-spacing:-1.2px;line-height:1}
+  .qcur{font-size:12px;color:var(--dim);font-weight:700;padding-bottom:4px}
+  .qeta{margin-left:auto;text-align:right}
+  .qeta b{display:block;font-size:17px;font-weight:800}
+  .qeta span{font-size:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.6px}
+  .brk{border-top:1px dashed var(--line);padding-top:10px}
+  .brl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:5px}
+  .brl b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+  .brl.tot{color:var(--ink);font-weight:700;font-size:12.5px;border-top:1px solid var(--line);
+           padding-top:7px;margin-top:7px}
+  .sig{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--ok);margin-top:9px}
+
+  .pay{display:flex;gap:8px;margin-bottom:11px}
+  .pay button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+              border-radius:11px;padding:10px 6px;font-size:11.5px;font-weight:700;cursor:pointer;
+              font-family:var(--font);transition:.18s}
+  .pay button.on{border-color:var(--brand);color:#fff;background:rgba(108,92,255,.15)}
+
+  .matching{text-align:center;padding:6px 0 2px}
+  .spin{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;
+        border:3px solid var(--line);border-top-color:var(--brand2);animation:sp .85s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .wave{font-size:11px;color:var(--dim);margin-top:9px}
+  .wave b{color:var(--warn)}
+
+  .dcard{display:flex;gap:12px;align-items:center;background:var(--panel2);
+         border:1px solid var(--line);border-radius:15px;padding:13px;margin-bottom:11px}
+  .av{width:48px;height:48px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+      font-weight:800;font-size:17px;color:#0a0e1a;
+      background:linear-gradient(135deg,var(--brand2),var(--brand))}
+  .dinfo{flex:1;min-width:0}
+  .dname{font-size:14.5px;font-weight:700}
+  .dmeta{font-size:11.5px;color:var(--dim);margin-top:2px}
+  .plate{font-family:ui-monospace,Consolas,monospace;font-size:14px;font-weight:800;
+         background:#e8ecf7;color:#0a0e1a;padding:5px 9px;border-radius:6px;letter-spacing:1px}
+  .etabar{display:flex;align-items:center;gap:10px;background:rgba(0,212,255,.09);
+          border:1px solid rgba(0,212,255,.3);border-radius:12px;padding:11px 13px;margin-bottom:11px}
+  .etabar .big{font-size:22px;font-weight:800;letter-spacing:-.6px}
+  .etabar .lb{font-size:11px;color:var(--dim);line-height:1.35}
+  .prog{height:4px;background:var(--line);border-radius:4px;overflow:hidden;margin:11px 0 0}
+  .prog i{display:block;height:100%;width:0;border-radius:4px;
+          background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .8s linear}
+
+  .stars{display:flex;gap:7px;justify-content:center;margin:10px 0 16px}
+  .stars button{background:none;border:0;font-size:31px;cursor:pointer;color:var(--line);
+                transition:transform .12s,color .18s;padding:0;line-height:1}
+  .stars button.on{color:var(--warn)} .stars button:hover{transform:scale(1.15)}
+  .rcpt{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:12px}
+
+  .toast{position:absolute;left:16px;right:16px;top:96px;z-index:55;background:rgba(18,24,40,.97);
+         border:1px solid var(--line);border-radius:13px;padding:12px 14px;font-size:12px;
+         color:var(--dim);opacity:0;transform:translateY(-10px);transition:.3s;pointer-events:none;
+         backdrop-filter:blur(8px)}
+  .toast.on{opacity:1;transform:none}
+  .toast b{color:var(--ink)}
+
+  /* ── Side panels ───────────────────────────────────── */
+  .side{flex:1 1 430px;max-width:560px;display:flex;flex-direction:column;gap:18px;min-width:340px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px}
+  .card h3{margin:0 0 4px;font-size:14px;letter-spacing:-.2px}
+  .card p.hint{margin:0 0 15px;font-size:12px;color:var(--dim);line-height:1.55}
+  .title{font-size:23px;font-weight:800;letter-spacing:-.7px;margin:0 0 6px}
+  .title span{background:linear-gradient(95deg,var(--brand2),var(--brand));
+              -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lead{font-size:13px;color:var(--dim);line-height:1.6;margin:0}
+
+  .fsm{display:flex;flex-direction:column;gap:0}
+  .st{display:flex;align-items:center;gap:12px;padding:8px 0;font-size:12.5px;color:var(--dim2);
+      transition:color .3s}
+  .st .mk{width:11px;height:11px;border-radius:50%;background:var(--line);flex:0 0 auto;
+          position:relative;transition:.3s}
+  .st .mk::after{content:'';position:absolute;left:50%;top:11px;width:1.5px;height:15px;
+                 background:var(--line);transform:translateX(-50%)}
+  .st:last-child .mk::after{display:none}
+  .st code{font-family:ui-monospace,Consolas,monospace;font-size:11px;letter-spacing:.3px}
+  .st .note{margin-left:auto;font-size:10.5px;opacity:.75;text-align:right}
+  .st.done{color:var(--dim)} .st.done .mk{background:var(--ok)}
+  .st.now{color:var(--ink);font-weight:700} .st.now .mk{background:var(--brand2);
+          box-shadow:0 0 0 4px rgba(0,212,255,.2)}
+
+  .log{background:#080b14;border:1px solid var(--line);border-radius:12px;padding:12px;
+       height:186px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:10.5px;
+       line-height:1.75;color:var(--dim)}
+  .log .ln{white-space:pre-wrap;word-break:break-word}
+  .log .t{color:var(--dim2)} .log .ev{color:var(--brand2)} .log .sv{color:var(--ok)}
+  .log .cl{color:var(--warn)} .log .er{color:var(--bad)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:9px 16px;font-size:11px;color:var(--dim);margin-top:12px}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;
+            vertical-align:middle}
+  .note{font-size:11.5px;color:var(--dim2);line-height:1.6;margin:13px 0 0;
+        border-left:2px solid var(--line);padding-left:11px}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:7px 12px;font-size:12px}
+  .kv .k{color:var(--dim)} .kv .v{font-variant-numeric:tabular-nums;font-weight:600}
+  @media(max-width:900px){body{padding:14px}.side{min-width:0}}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════ PHONE ══════════════════════ -->
+<div class="phone">
+  <div class="notch"></div>
+  <div class="screen">
+
+    <div class="maparea">
+      <svg class="map" viewBox="0 0 390 800" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id="wat" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0d2137"/><stop offset="100%" stop-color="#081726"/>
+          </linearGradient>
+          <filter id="glow"><feGaussianBlur stdDeviation="3.2" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+
+        <rect width="390" height="800" fill="#131a2b"/>
+        <!-- costa / rambla -->
+        <path d="M-10,646 C70,626 140,662 214,650 C286,638 342,604 400,614 L400,810 L-10,810 Z" fill="url(#wat)"/>
+        <path d="M-10,638 C70,618 140,654 214,642 C286,630 342,596 400,606"
+              fill="none" stroke="#2c3a5c" stroke-width="5" opacity=".85"/>
+
+        <!-- manzanas -->
+        <g id="blocks" opacity=".5"></g>
+        <!-- calles -->
+        <g id="roads"></g>
+        <!-- avenida principal -->
+        <path d="M18,470 L372,392" stroke="#33415f" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+        <path d="M18,470 L372,392" stroke="#3d4d70" stroke-width="1.4" stroke-dasharray="9 11" opacity=".7"/>
+
+        <!-- rutas -->
+        <path id="rPickup" class="route pickup" d=""/>
+        <path id="rTrip"   class="route" d=""/>
+
+        <!-- autos -->
+        <g id="cars"></g>
+
+        <!-- pines -->
+        <g id="pinO" class="pin" transform="translate(150,470) scale(0)">
+          <circle r="15" fill="rgba(34,197,94,.16)"/>
+          <circle r="7.5" fill="#22c55e" stroke="#0a0e1a" stroke-width="2.5"/>
+        </g>
+        <g id="pinD" class="pin" transform="translate(150,470) scale(0)">
+          <path d="M0,3 C0,3 13,-11 13,-21 A13,13 0 1 0 -13,-21 C-13,-11 0,3 0,3 Z"
+                fill="#00d4ff" stroke="#0a0e1a" stroke-width="2.5" filter="url(#glow)"/>
+          <circle cy="-21" r="4.6" fill="#0a0e1a"/>
+        </g>
+      </svg>
+    </div>
+
+    <div class="topbar">
+      <div class="logo"><span class="orb"></span>Orbit Rides</div>
+      <span class="badge" id="cityBadge">MONTEVIDEO</span>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="sheet" id="sheet"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════ SIDE ══════════════════════ -->
+<div class="side">
+
+  <div class="card">
+    <h1 class="title">Prototipo del flujo de <span>pasajero</span></h1>
+    <p class="lead">Navegable de punta a punta: detección de origen, elección de destino, cotización
+    firmada, dispatch por olas, viaje en curso y calificación. El mapa es esquemático a propósito
+    — el objetivo es validar el <b>flujo y los estados</b>, no el renderizado de tiles.</p>
+    <p class="note">Todo corre en el navegador con datos simulados. En producción, la tarifa y la
+    asignación las decide el servidor: acá se muestran como si vinieran de la API para que se vea
+    dónde va cada responsabilidad.</p>
+  </div>
+
+  <div class="card">
+    <h3>Máquina de estados del viaje</h3>
+    <p class="hint">El servidor es el único que hace transiciones. El cliente pide, el servidor decide.</p>
+    <div class="fsm" id="fsm"></div>
+  </div>
+
+  <div class="card">
+    <h3>Eventos del servidor <span style="font-weight:400;color:var(--dim2);font-size:11px">(trip_events)</span></h3>
+    <p class="hint">Bitácora append-only. Es la verdad histórica del viaje; la tabla <code>trips</code>
+    es solo el último estado.</p>
+    <div class="log" id="log"></div>
+    <div class="legend">
+      <span><i style="background:#e8ecf7"></i>Conductor libre</span>
+      <span><i style="background:#f59e0b"></i>Con oferta activa</span>
+      <span><i style="background:#00d4ff"></i>Asignado a este viaje</span>
+      <span><i style="background:#5b6480"></i>Ocupado</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Parámetros de tarifa</h3>
+    <p class="hint">Vienen de <code>city_pricing</code>, versionados por fecha. Se cambian sin deployar.</p>
+    <div class="kv">
+      <span class="k">Tarifa base</span><span class="v">$ 60</span>
+      <span class="k">Por kilómetro</span><span class="v">$ 28</span>
+      <span class="k">Por minuto</span><span class="v">$ 4</span>
+      <span class="k">Tarifa mínima</span><span class="v">$ 110</span>
+      <span class="k">Multiplicador de demanda</span><span class="v" id="pSurge">1,0×</span>
+      <span class="k">Vigencia del quote</span><span class="v">120 s</span>
+    </div>
+    <p class="note">La cotización se firma con HMAC y vence. El cliente manda el <code>quote_id</code>,
+    nunca el monto. Sin esto, la tarifa se edita desde el celular.</p>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ─── Datos simulados ──────────────────────────────────
+  var PLACES = [
+    {n:'Aeropuerto de Carrasco',   a:'Ruta 101, Canelones',        i:'✈',  x:352, y:300, km:19.4},
+    {n:'Terminal Tres Cruces',     a:'Bulevar Artigas 1825',       i:'🚌', x:196, y:432, km:3.1},
+    {n:'Ciudad Vieja',             a:'Sarandí y Juan C. Gómez',    i:'🏛', x:62,  y:556, km:5.2},
+    {n:'Rambla de Pocitos',        a:'Rambla Rep. del Perú',       i:'🌊', x:268, y:606, km:6.8},
+    {n:'Estadio Centenario',       a:'Av. Ricaldoni s/n',          i:'⚽', x:238, y:376, km:4.4},
+    {n:'Puerto del Buceo',         a:'Rambla Armenia',             i:'⛵', x:314, y:584, km:8.1},
+    {n:'Mercado Agrícola',         a:'José L. Terra 2220',         i:'🍅', x:150, y:392, km:2.6},
+    {n:'Parque Rodó',              a:'Julio Herrera y Reissig',    i:'🎡', x:176, y:520, km:3.8}
+  ];
+  var DRIVERS = [
+    {id:'d1', n:'Adrián P.',  r:4.92, v:'Bestune B70',   c:'Gris',   p:'SBA 4192', x:126, y:452, st:'free'},
+    {id:'d2', n:'Marcela G.', r:4.87, v:'Chevrolet Onix',c:'Blanco', p:'SCK 1730', x:206, y:498, st:'free'},
+    {id:'d3', n:'Rodrigo F.', r:4.74, v:'Fiat Cronos',   c:'Negro',  p:'SBH 2054', x:104, y:520, st:'free'},
+    {id:'d4', n:'Valeria L.', r:4.95, v:'Toyota Yaris',  c:'Plata',  p:'SCD 8811', x:242, y:430, st:'free'},
+    {id:'d5', n:'Nicolás R.', r:4.61, v:'VW Gol',        c:'Rojo',   p:'SAB 3327', x:172, y:562, st:'busy'},
+    {id:'d6', n:'Cecilia M.', r:4.89, v:'Renault Kwid',  c:'Azul',   p:'SCF 5240', x:290, y:470, st:'free'},
+    {id:'d7', n:'Julián A.',  r:4.55, v:'Peugeot 208',   c:'Blanco', p:'SBD 6693', x:88,  y:412, st:'free'}
+  ];
+  var STATES = [
+    ['REQUESTED',  'el rider confirma un quote válido'],
+    ['MATCHING',   'olas de ofertas exclusivas, 15 s'],
+    ['ACCEPTED',   'driver y comisión congelados'],
+    ['ARRIVED',    'arranca la espera gratuita'],
+    ['IN_PROGRESS','se registra la traza real'],
+    ['COMPLETED',  'tarifa final, ledger, ratings']
+  ];
+  var ORIGIN = {x:150, y:470, addr:'Bulevar España 2314', ref:'Pocitos, Montevideo'};
+
+  var PRICE = {base:60, km:28, min:4, floor:110};
+
+  // ─── Estado ───────────────────────────────────────────
+  var S = {
+    step:'idle', dest:null, quote:null, pay:'cash',
+    driver:null, wave:0, stars:0, eta:0, t0:Date.now()
+  };
+  var timers = [];
+  function later(fn, ms){ var t = setTimeout(fn, ms); timers.push(t); return t; }
+  function clearAll(){ timers.forEach(clearTimeout); timers = []; }
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ─── Mapa: manzanas y calles ──────────────────────────
+  (function drawCity(){
+    var blocks = $('blocks'), roads = $('roads'), b = '', r = '';
+    // manzanas irregulares
+    for (var gy = 0; gy < 11; gy++){
+      for (var gx = 0; gx < 7; gx++){
+        var x = 6 + gx*56 + ((gy%2)?7:0), y = 250 + gy*38;
+        var w = 40 + (gx*gy%3)*5, h = 22 + (gx%2)*4;
+        if (y > 600 && x > 180) continue;              // agua
+        if (y > 636) continue;
+        b += '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="2.5" fill="#1a2338"/>';
+      }
+    }
+    blocks.innerHTML = b;
+    // calles verticales y horizontales
+    for (var i = 0; i < 8; i++){
+      var vx = 2 + i*56;
+      r += '<line x1="'+vx+'" y1="240" x2="'+(vx+16)+'" y2="660" stroke="#212a42" stroke-width="3.5"/>';
+    }
+    for (var j = 0; j < 12; j++){
+      var hy = 244 + j*38;
+      r += '<line x1="-6" y1="'+hy+'" x2="396" y2="'+(hy-9)+'" stroke="#1e2740" stroke-width="2.6"/>';
+    }
+    roads.innerHTML = r;
+  })();
+
+  // ─── Autos ────────────────────────────────────────────
+  function renderCars(){
+    var g = $('cars'), h = '';
+    DRIVERS.forEach(function(d){
+      var cls = 'car ' + (d.st === 'busy' ? 'busy' : d.st === 'offered' ? 'offered'
+                        : d.st === 'mine' ? 'mine' : '');
+      h += '<g class="carg" id="car-'+d.id+'" transform="translate('+d.x+','+d.y+')">'
+        +  '<circle class="ring'+(d.st==='offered'?' on':'')+'" r="8"/>'
+        +  '<g class="'+cls+'" transform="rotate('+(d.rot||-12)+')">'
+        +    '<rect x="-7" y="-4.5" width="14" height="9" rx="2.6"/>'
+        +    '<rect x="-2.6" y="-3" width="5" height="6" rx="1.2" fill="#0a0e1a" opacity=".5"/>'
+        +  '</g></g>';
+    });
+    g.innerHTML = h;
+  }
+  function moveCar(d, x, y){
+    d.x = x; d.y = y;
+    var el = $('car-'+d.id);
+    if (el) el.setAttribute('transform','translate('+x+','+y+')');
+  }
+  function setCarState(d, st){
+    d.st = st;
+    var el = $('car-'+d.id); if (!el) return;
+    var inner = el.querySelector('g'), ring = el.querySelector('.ring');
+    inner.setAttribute('class','car ' + (st==='busy'?'busy':st==='offered'?'offered':st==='mine'?'mine':''));
+    ring.setAttribute('class','ring' + (st==='offered'?' on':''));
+  }
+
+  // ─── Pines y rutas ────────────────────────────────────
+  function pin(id, x, y, on){
+    var el = $(id);
+    el.setAttribute('transform','translate('+x+','+y+') scale('+(on?1:0)+')');
+  }
+  function curve(a, b, bend){
+    bend = bend || 0.26;
+    var mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+    var dx = b.x-a.x, dy = b.y-a.y;
+    return 'M'+a.x+','+a.y+' Q'+(mx - dy*bend)+','+(my + dx*bend)+' '+b.x+','+b.y;
+  }
+  function setRoute(id, d, on){
+    var el = $(id);
+    el.setAttribute('d', d || '');
+    el.classList.toggle('on', !!on);
+  }
+
+  // ─── Log ──────────────────────────────────────────────
+  function log(kind, msg){
+    var el = $('log');
+    var s = ((Date.now() - S.t0)/1000).toFixed(1);
+    var cls = kind === 'client' ? 'cl' : kind === 'state' ? 'ev' : kind === 'err' ? 'er' : 'sv';
+    var tag = kind === 'client' ? 'cliente ' : kind === 'state' ? 'estado  ' : kind === 'err' ? 'error   ' : 'servidor';
+    var d = document.createElement('div');
+    d.className = 'ln';
+    d.innerHTML = '<span class="t">'+('  '+s).slice(-5)+'s</span> <span class="'+cls+'">'+tag+'</span>  '+msg;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ─── FSM panel ────────────────────────────────────────
+  var ORDER = ['REQUESTED','MATCHING','ACCEPTED','ARRIVED','IN_PROGRESS','COMPLETED'];
+  function renderFsm(){
+    var cur = ORDER.indexOf(S.step), h = '';
+    STATES.forEach(function(s, i){
+      var cls = cur < 0 ? '' : (i < cur ? 'done' : i === cur ? 'now' : '');
+      h += '<div class="st '+cls+'"><span class="mk"></span><code>'+s[0]+'</code>'
+        +  '<span class="note">'+s[1]+'</span></div>';
+    });
+    $('fsm').innerHTML = h;
+  }
+
+  function toast(html, ms){
+    var t = $('toast');
+    t.innerHTML = html; t.classList.add('on');
+    later(function(){ t.classList.remove('on'); }, ms || 3000);
+  }
+
+  // ─── Tarifa ───────────────────────────────────────────
+  function computeQuote(place){
+    var km = place.km;
+    var min = Math.round(km * 2.6 + 3);
+    var surge = km > 15 ? 1.0 : 1.0;
+    var raw = PRICE.base + km*PRICE.km + min*PRICE.min;
+    var fare = Math.max(raw, PRICE.floor) * surge;
+    return {
+      km: km, min: min, surge: surge,
+      base: PRICE.base, dist: km*PRICE.km, time: min*PRICE.min,
+      fare: Math.round(fare/5)*5,
+      id: 'qt_' + Math.random().toString(36).slice(2,10),
+      sig: Math.random().toString(36).slice(2,10).toUpperCase(),
+      exp: 120
+    };
+  }
+  function money(n){ return n.toLocaleString('es-UY'); }
+
+  // ─── Pantallas ────────────────────────────────────────
+  function go(step){ S.step = step; renderFsm(); render(); }
+
+  function render(){
+    var sh = $('sheet');
+    var st = S.step;
+
+    if (st === 'idle'){
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>¿A dónde vamos?</h2>'
+      + '<p class="sub">Detectamos tu ubicación por GPS. Podés corregirla arrastrando el pin.</p>'
+      + '<div class="field" data-act="gps"><span class="dot o"></span><div class="txt">'
+      +   '<div class="lbl">Origen</div><div class="val ph">Toca para detectar tu ubicación</div></div></div>'
+      + '<div class="field" style="opacity:.45;cursor:not-allowed"><span class="dot d sq"></span>'
+      +   '<div class="txt"><div class="lbl">Destino</div>'
+      +   '<div class="val ph">Primero confirmá el origen</div></div></div>'
+      + '<button class="btn" data-act="gps">Usar mi ubicación</button>';
+    }
+
+    else if (st === 'origin'){
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>¿A dónde vamos?</h2>'
+      + '<p class="sub">Origen confirmado. Elegí el destino.</p>'
+      + '<div class="field" data-act="gps"><span class="dot o"></span><div class="txt">'
+      +   '<div class="lbl">Origen</div><div class="val">'+ORIGIN.addr+'</div></div></div>'
+      + '<div class="field" data-act="pick"><span class="dot d sq"></span><div class="txt">'
+      +   '<div class="lbl">Destino</div><div class="val ph">Buscá una dirección o lugar</div></div></div>'
+      + '<button class="btn" data-act="pick">Elegir destino</button>';
+    }
+
+    else if (st === 'picking'){
+      var lst = PLACES.map(function(p, i){
+        return '<div class="place" data-place="'+i+'"><div class="ic">'+p.i+'</div>'
+          + '<div><div class="nm">'+p.n+'</div><div class="ad">'+p.a+'</div></div>'
+          + '<span class="km">'+p.km.toFixed(1).replace('.',',')+' km</span></div>';
+      }).join('');
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>Destino</h2>'
+      + '<p class="sub">El autocomplete tiene que entender cómo escribe la gente acá: '
+      +   '«Rivera y Comercio», «18 de Julio 1234». Ese detalle define la adopción.</p>'
+      + '<div class="plist">'+lst+'</div>'
+      + '<button class="btn ghost sm" data-act="back" style="margin-top:12px">Volver</button>';
+    }
+
+    else if (st === 'quote'){
+      var q = S.quote;
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>'+S.dest.n+'</h2>'
+      + '<p class="sub">'+S.dest.a+'</p>'
+      + '<div class="quote">'
+      +   '<div class="qtop"><span class="qprice">'+money(q.fare)+'</span><span class="qcur">UYU</span>'
+      +     '<span class="qeta"><b>'+q.min+' min</b><span>duración estimada</span></span></div>'
+      +   '<div class="brk">'
+      +     '<div class="brl"><span>Tarifa base</span><b>'+money(q.base)+'</b></div>'
+      +     '<div class="brl"><span>Distancia · '+q.km.toFixed(1).replace('.',',')+' km × $'+PRICE.km+'</span><b>'+money(Math.round(q.dist))+'</b></div>'
+      +     '<div class="brl"><span>Tiempo · '+q.min+' min × $'+PRICE.min+'</span><b>'+money(Math.round(q.time))+'</b></div>'
+      +     '<div class="brl tot"><span>Total (redondeado)</span><b>'+money(q.fare)+'</b></div>'
+      +   '</div>'
+      +   '<div class="sig">🔒 Cotización firmada por el servidor · <code>'+q.id+'</code> · vence en '+q.exp+' s</div>'
+      + '</div>'
+      + '<div class="pay">'
+      +   '<button data-pay="cash" class="'+(S.pay==='cash'?'on':'')+'">Efectivo</button>'
+      +   '<button data-pay="card" class="'+(S.pay==='card'?'on':'')+'">Tarjeta</button>'
+      +   '<button data-pay="wallet" class="'+(S.pay==='wallet'?'on':'')+'">Wallet</button>'
+      + '</div>'
+      + '<button class="btn" data-act="request">Pedir Orbit · '+money(q.fare)+'</button>'
+      + '<div class="btnrow"><button class="btn ghost sm" data-act="back2">Cambiar destino</button></div>';
+    }
+
+    else if (st === 'REQUESTED' || st === 'MATCHING'){
+      var offered = DRIVERS.filter(function(d){ return d.st === 'offered'; }).length;
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<div class="matching"><div class="spin"></div>'
+      +   '<h2 style="text-align:center">Buscando conductor</h2>'
+      +   '<p class="sub" style="text-align:center">Ofertas exclusivas, no broadcast. Cada conductor '
+      +     'tiene 15 s para decidir sin pelear con nadie por el botón.</p>'
+      +   '<div class="wave">Ola <b>'+Math.max(1,S.wave)+'</b> · '+offered+' conductor'+(offered===1?'':'es')+' con oferta activa</div>'
+      + '</div>'
+      + '<button class="btn danger sm" data-act="cancel" style="margin-top:14px">Cancelar (sin cargo)</button>';
+    }
+
+    else if (st === 'ACCEPTED' || st === 'ARRIVED'){
+      var d = S.driver, arrived = (st === 'ARRIVED');
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<div class="etabar"><span class="big">'+(arrived ? '¡Llegó!' : S.eta + ' min')+'</span>'
+      +   '<span class="lb">'+(arrived
+            ? 'Te espera en '+ORIGIN.addr+'.<br>5 minutos de espera sin cargo.'
+            : d.n.split(' ')[0]+' está en camino<br>al punto de encuentro.')+'</span></div>'
+      + '<div class="dcard"><div class="av">'+d.n.charAt(0)+'</div>'
+      +   '<div class="dinfo"><div class="dname">'+d.n+' · ★ '+d.r.toFixed(2).replace('.',',')+'</div>'
+      +   '<div class="dmeta">'+d.v+' · '+d.c+'</div></div>'
+      +   '<span class="plate">'+d.p+'</span></div>'
+      + (arrived
+          ? '<button class="btn" data-act="board">Subí al vehículo</button>'
+          : '<div class="prog"><i id="pbar"></i></div>')
+      + '<div class="btnrow">'
+      +   '<button class="btn ghost sm" data-act="share">Compartir viaje</button>'
+      +   '<button class="btn danger sm" data-act="cancel">Cancelar</button></div>';
+      if (!arrived) later(function(){ var b = $('pbar'); if (b) b.style.width = '100%'; }, 60);
+    }
+
+    else if (st === 'IN_PROGRESS'){
+      var d2 = S.driver;
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>En viaje hacia '+S.dest.n+'</h2>'
+      + '<p class="sub">Llegada estimada en '+S.quote.min+' min. Se registra la traza real para '
+      +   'poder resolver disputas después.</p>'
+      + '<div class="dcard"><div class="av">'+d2.n.charAt(0)+'</div>'
+      +   '<div class="dinfo"><div class="dname">'+d2.n+'</div>'
+      +   '<div class="dmeta">'+d2.v+' · '+d2.c+'</div></div>'
+      +   '<span class="plate">'+d2.p+'</span></div>'
+      + '<div class="prog"><i id="pbar2" style="width:0"></i></div>'
+      + '<div class="btnrow"><button class="btn ghost sm" data-act="share">Compartir</button>'
+      +   '<button class="btn danger sm" data-act="sos">Emergencia</button></div>';
+      later(function(){ var b = $('pbar2'); if (b) b.style.width = '100%'; }, 60);
+    }
+
+    else if (st === 'COMPLETED'){
+      var q2 = S.quote, dd = S.driver;
+      var payLbl = S.pay === 'cash' ? 'Efectivo' : S.pay === 'card' ? 'Tarjeta' : 'Wallet';
+      sh.innerHTML =
+        '<div class="grip"></div>'
+      + '<h2>Llegaste</h2>'
+      + '<p class="sub">Tarifa final calculada por el servidor sobre la traza real.</p>'
+      + '<div class="rcpt">'
+      +   '<div class="brl"><span>Tarifa cotizada</span><b>'+money(q2.fare)+'</b></div>'
+      +   '<div class="brl"><span>Ajuste por recorrido real</span><b>0</b></div>'
+      +   '<div class="brl"><span>Espera adicional</span><b>0</b></div>'
+      +   '<div class="brl tot"><span>Total · '+payLbl+'</span><b>'+money(q2.fare)+' UYU</b></div>'
+      + '</div>'
+      + '<p class="sub" style="text-align:center;margin-bottom:0">¿Cómo estuvo el viaje con '+dd.n.split(' ')[0]+'?</p>'
+      + '<div class="stars">'+[1,2,3,4,5].map(function(i){
+            return '<button data-star="'+i+'" class="'+(S.stars>=i?'on':'')+'">★</button>'; }).join('')+'</div>'
+      + '<button class="btn" data-act="reset">Listo</button>';
+    }
+  }
+
+  // ─── Acciones ─────────────────────────────────────────
+  var ACT = {
+    gps: function(){
+      log('client','POST /v1/geo/reverse  {lat:-34.9112, lng:-56.1553}');
+      toast('<b>Ubicación detectada</b><br>Precisión ±12 m · '+ORIGIN.ref, 2600);
+      later(function(){
+        pin('pinO', ORIGIN.x, ORIGIN.y, true);
+        log('server','200  address:"'+ORIGIN.addr+'"  city_id:mvd  accuracy_m:12');
+        go('origin');
+      }, 520);
+    },
+
+    pick: function(){ go('picking'); },
+    back: function(){ go('origin'); },
+    back2: function(){ setRoute('rTrip','',false); pin('pinD',0,0,false); go('picking'); },
+
+    place: function(i){
+      var p = PLACES[+i];
+      S.dest = p;
+      S.quote = computeQuote(p);
+      pin('pinD', p.x, p.y, true);
+      setRoute('rTrip', curve(ORIGIN, p, 0.2), true);
+      log('client','POST /v1/quotes  {origin, destination:"'+p.n+'"}');
+      later(function(){
+        log('server','200  quote_id:'+S.quote.id+'  fare_cents:'+(S.quote.fare*100)
+            +'  distance_m:'+Math.round(p.km*1000)+'  expires_in:120s  sig:'+S.quote.sig);
+        go('quote');
+      }, 420);
+    },
+
+    pay: function(v){ S.pay = v; render(); },
+
+    request: function(){
+      log('client','POST /v1/trips  {quote_id:"'+S.quote.id+'", payment_method:"'+S.pay+'"}  Idempotency-Key: '+S.quote.sig);
+      go('REQUESTED');
+      later(function(){
+        log('server','201  trip_id created · firma del quote validada · comisión aún NO congelada');
+        log('state','REQUESTED');
+        go('MATCHING');
+        log('state','MATCHING');
+        dispatchWave(1);
+      }, 700);
+    },
+
+    cancel: function(){
+      var free = (S.step === 'REQUESTED' || S.step === 'MATCHING');
+      log('client','POST /v1/trips/{id}/cancel  {by:"rider"}');
+      log('server','200  status:CANCELED  fee_cents:'+(free ? 0 : 8000)
+          + (free ? '  (sin cargo: no había conductor asignado)' : '  (con cargo: había conductor asignado)'));
+      toast(free ? '<b>Viaje cancelado</b><br>Sin cargo.'
+                 : '<b>Viaje cancelado</b><br>Se aplicó cargo por cancelación tardía.', 3400);
+      reset(true);
+    },
+
+    board: function(){
+      log('client','POST /v1/trips/{id}/board');
+      log('state','IN_PROGRESS  ·  empieza el registro de la traza real');
+      go('IN_PROGRESS');
+      var d = S.driver;
+      moveCar(d, ORIGIN.x, ORIGIN.y);
+      later(function(){
+        setRoute('rPickup','',false);
+        var steps = 7, i = 0;
+        var iv = setInterval(function(){
+          i++;
+          var t = i/steps;
+          var nx = ORIGIN.x + (S.dest.x - ORIGIN.x)*t;
+          var ny = ORIGIN.y + (S.dest.y - ORIGIN.y)*t - Math.sin(t*Math.PI)*26;
+          moveCar(d, nx, ny);
+          if (i >= steps){
+            clearInterval(iv);
+            log('server','tarifa final recalculada sobre la traza real · sin ajustes');
+            log('state','COMPLETED');
+            setCarState(d,'free');
+            go('COMPLETED');
+          }
+        }, 780);
+        timers.push(iv);
+      }, 300);
+    },
+
+    share: function(){
+      log('client','POST /v1/trips/{id}/share');
+      log('server','201  link temporal generado · expira al terminar el viaje');
+      toast('<b>Link de seguimiento creado</b><br>Acceso temporal, expira al finalizar el viaje.', 3200);
+    },
+
+    sos: function(){
+      log('err','SOS activado · ubicación en vivo enviada a soporte y al contacto de emergencia');
+      toast('<b>Emergencia activada</b><br>Soporte notificado con tu ubicación en vivo.', 3600);
+    },
+
+    star: function(v){
+      S.stars = +v;
+      log('client','POST /v1/trips/{id}/rating  {stars:'+v+'}');
+      render();
+    },
+
+    reset: function(){ reset(false); }
+  };
+
+  // ─── Dispatch simulado ────────────────────────────────
+  function dist(a, b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+  function dispatchWave(w){
+    S.wave = w;
+    var pool = DRIVERS.filter(function(d){ return d.st === 'free'; })
+      .map(function(d){ return {d:d, sc: dist(d, ORIGIN) - (d.r-4.5)*40}; })
+      .sort(function(a,b){ return a.sc - b.sc; });
+
+    var take = w === 1 ? 3 : w === 2 ? 3 : 2;
+    var batch = pool.slice(0, take).map(function(o){ return o.d; });
+
+    if (!batch.length){
+      log('err','sin conductores elegibles · status:NO_DRIVERS');
+      toast('<b>No encontramos conductor</b><br>Probá de nuevo en unos minutos.', 4000);
+      reset(true);
+      return;
+    }
+
+    log('server','dispatch ola '+w+' · radio '+(w*3)+' km · '+batch.length+' ofertas exclusivas (15 s)');
+    batch.forEach(function(d){
+      setCarState(d,'offered');
+      log('server','  → oferta a '+d.n+'  (★'+d.r.toFixed(2)+', '+Math.round(dist(d,ORIGIN)/9)+' min)  lock SET NX ok');
+    });
+    render();
+
+    // en la ola 2 alguien acepta; en la 1 nadie (para mostrar el timeout)
+    var accepts = (w >= 2);
+    later(function(){
+      if (S.step !== 'MATCHING') return;
+      if (accepts){
+        var winner = batch[0];
+        batch.forEach(function(d){ if (d !== winner) setCarState(d,'free'); });
+        accept(winner);
+      } else {
+        batch.forEach(function(d){
+          setCarState(d,'free');
+          log('server','  ✕ '+d.n+' · outcome:timeout · lock liberado');
+        });
+        dispatchWave(w+1);
+      }
+    }, w === 1 ? 3400 : 2600);
+  }
+
+  function accept(d){
+    S.driver = d;
+    setCarState(d,'mine');
+    DRIVERS.forEach(function(o){ if (o !== d && o.st === 'free' && Math.random() < .4) setCarState(o,'busy'); });
+    S.eta = Math.max(2, Math.round(dist(d, ORIGIN)/9));
+    log('server','ACEPTADA por '+d.n+' · driver_id y commission_bps CONGELADOS en el viaje');
+    log('state','ACCEPTED  ·  eta_at_accept: '+S.eta+' min');
+    setRoute('rPickup', curve(d, ORIGIN, 0.16), true);
+    go('ACCEPTED');
+    toast('<b>'+d.n+' aceptó tu viaje</b><br>'+d.v+' · '+d.p+' · llega en '+S.eta+' min', 3600);
+
+    // acercamiento
+    var steps = 5, i = 0, sx = d.x, sy = d.y;
+    var iv = setInterval(function(){
+      i++;
+      var t = i/steps;
+      moveCar(d, sx + (ORIGIN.x-sx)*t, sy + (ORIGIN.y-sy)*t);
+      S.eta = Math.max(0, Math.round((1-t)*S.eta));
+      if (S.step === 'ACCEPTED') render();
+      if (i >= steps){
+        clearInterval(iv);
+        log('state','ARRIVED  ·  arranca la ventana de espera gratuita (5 min)');
+        go('ARRIVED');
+        toast('<b>Tu conductor llegó</b><br>Buscá el '+d.v+' '+d.c+', matrícula '+d.p, 4200);
+      }
+    }, 1150);
+    timers.push(iv);
+  }
+
+  // ─── Reset ────────────────────────────────────────────
+  function reset(quiet){
+    clearAll();
+    DRIVERS.forEach(function(d, i){ setCarState(d, i === 4 ? 'busy' : 'free'); });
+    // devolver a posiciones originales
+    var home = [[126,452],[206,498],[104,520],[242,430],[172,562],[290,470],[88,412]];
+    DRIVERS.forEach(function(d, i){ moveCar(d, home[i][0], home[i][1]); });
+    setRoute('rTrip','',false); setRoute('rPickup','',false);
+    pin('pinD',0,0,false);
+    S.dest = null; S.quote = null; S.driver = null; S.wave = 0; S.stars = 0; S.eta = 0;
+    if (!quiet){
+      $('log').innerHTML = ''; S.t0 = Date.now();
+      pin('pinO',0,0,false);
+      go('idle');
+      log('server','sesión nueva · esperando solicitud del pasajero');
+    } else {
+      go('origin');
+    }
+  }
+
+  // ─── Eventos ──────────────────────────────────────────
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('[data-act],[data-place],[data-pay],[data-star]');
+    if (!t) return;
+    if (t.hasAttribute('data-place')) return ACT.place(t.getAttribute('data-place'));
+    if (t.hasAttribute('data-pay'))   return ACT.pay(t.getAttribute('data-pay'));
+    if (t.hasAttribute('data-star'))  return ACT.star(t.getAttribute('data-star'));
+    var a = t.getAttribute('data-act');
+    if (ACT[a]) ACT[a]();
+  });
+
+  // ─── Arranque ─────────────────────────────────────────
+  renderCars();
+  renderFsm();
+  render();
+  log('server','sesión nueva · esperando solicitud del pasajero');
+  // deriva sutil de los autos libres, para que el mapa se sienta vivo
+  setInterval(function(){
+    DRIVERS.forEach(function(d){
+      if (d.st !== 'free') return;
+      moveCar(d, d.x + (Math.random()-0.5)*7, d.y + (Math.random()-0.5)*7);
+    });
+  }, 2600);
+})();
+</script>
+</body>
+</html>

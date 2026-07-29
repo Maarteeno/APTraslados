@@ -1,0 +1,20 @@
+# Docker busca este archivo en la raíz del contexto de build (orbit-rides/),
+# NO junto al Dockerfile. Si falta, el `COPY . .` mete el node_modules del host
+# dentro de la imagen: binarios nativos de Windows en un contenedor Linux.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+coverage
+**/coverage
+docs
+infra
+*.md
+!README.md

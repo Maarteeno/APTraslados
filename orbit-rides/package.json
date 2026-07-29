@@ -1,0 +1,33 @@
+{
+  "name": "orbit-rides",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Orbit Rides \u2014 plataforma de viajes. Monorepo.",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/shared",
+    "apps/rider",
+    "apps/driver"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b packages/domain services/api",
+    "typecheck": "tsc -b packages/domain services/api",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "npm run build && npm run test",
+    "dev": "npm run dev --workspace @orbit/api",
+    "migrate": "npm run migrate --workspace @orbit/api",
+    "seed": "npm run seed --workspace @orbit/api",
+    "smoke": "npm run smoke --workspace @orbit/api",
+    "clean": "node -e \"const{rmSync}=require('fs');['packages/domain/dist','services/api/dist','packages/domain/tsconfig.tsbuildinfo','services/api/tsconfig.tsbuildinfo'].forEach(p=>rmSync(p,{recursive:true,force:true}))\"",
+    "ride": "npm run ride --workspace @orbit/api"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10",
+    "@types/node": "^22.9.0"
+  }
+}

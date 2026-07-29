@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Orbit Rides",
+    "slug": "orbit-rider",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "orbitrider",
+    "android": {
+      "package": "com.orbitrides.rider",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET"
+      ]
+    },
+    "plugins": [
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Orbit necesita tu ubicación para saber desde dónde te buscamos."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "newArchEnabled": true
+  }
+}

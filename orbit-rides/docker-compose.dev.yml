@@ -1,0 +1,22 @@
+# Sobrecapa para desarrollar con recarga en caliente.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Monta el código del host y corre tsx watch en vez del build compilado, así
+# no hay que reconstruir la imagen en cada cambio.
+
+services:
+  api:
+    build:
+      target: build
+    command: ["npx", "tsx", "watch", "services/api/src/index.ts"]
+    volumes:
+      - ./packages:/repo/packages
+      - ./services:/repo/services
+      # node_modules queda en la imagen: montar el del host rompe los binarios
+      # nativos si el host no es Linux.
+      - /repo/node_modules
+    environment:
+      LOG_LEVEL: debug
+      # Acá sí: el stage `build` tiene las devDependencies, pino-pretty incluida.
+      LOG_PRETTY: "true"

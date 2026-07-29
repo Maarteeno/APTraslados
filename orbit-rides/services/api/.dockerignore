@@ -1,0 +1,16 @@
+# Este archivo NO tiene efecto. Se deja solo para explicar por qué.
+#
+# Docker lee .dockerignore desde la raíz del CONTEXTO de build, que acá es
+# orbit-rides/ (docker-compose.yml lo define como `context: .`), y no desde la
+# carpeta donde vive el Dockerfile.
+#
+# El que realmente se aplica es: orbit-rides/.dockerignore
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+.git
+.env
+.env.*
+coverage

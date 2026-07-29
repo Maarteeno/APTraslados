@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Orbit Conductor",
+    "slug": "orbit-driver",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "orbitdriver",
+    "android": {
+      "package": "com.orbitrides.driver",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Orbit necesita tu ubicación para ofrecerte los viajes más cercanos."
+        }
+      ],
+      [
+        "expo-build-properties",
+        { "android": { "usesCleartextTraffic": true } }
+      ]
+    ],
+    "newArchEnabled": true
+  }
+}

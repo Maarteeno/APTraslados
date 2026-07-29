@@ -1,0 +1,203 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Orbit Rides — entorno local completo
+#
+#   docker compose up -d --build
+#   docker compose exec api npm run migrate --workspace @orbit/api
+#   docker compose exec api npm run seed    --workspace @orbit/api
+#
+# El API queda en http://localhost:8080
+# Desde el emulador de Android se accede como http://10.0.2.2:8080
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    # postgis/postgis ya trae la extensión compilada: con la imagen oficial de
+    # postgres habría que instalarla a mano en cada arranque.
+    image: postgis/postgis:16-3.4-alpine
+    container_name: orbit-postgres
+    environment:
+      POSTGRES_USER: orbit
+      POSTGRES_PASSWORD: orbit
+      POSTGRES_DB: orbit
+      # Locale es_UY para que los ordenamientos de texto se comporten igual que
+      # en producción.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orbit -d orbit"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # Sin esto, después de reiniciar la máquina el API vuelve solo (tiene
+    # restart) pero la base no, y queda unhealthy sin explicación aparente.
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      # Logueá las consultas lentas: en desarrollo es donde se detecta el N+1.
+      - -c
+      - log_min_duration_statement=200
+
+  redis:
+    image: redis:7-alpine
+    container_name: orbit-redis
+    ports:
+      - "6379:6379"
+    # appendonly para no perder los locks en un reinicio durante desarrollo.
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ── Ruteo: OSRM autohospedado ────────────────────────────────────────────
+  #
+  # Motor de ruteo en C++ sobre datos de OpenStreetMap. Sin API key, sin
+  # tarjeta, sin cuota. Corre al lado del API, así que las llamadas no salen a
+  # internet.
+  #
+  # Por qué importa para Orbit: el endpoint /table calcula la matriz de ETA de
+  # todos los conductores candidatos de una ola de dispatch. Esa es la llamada
+  # que más se multiplica —escala con los INTENTOS de asignación, no con los
+  # viajes cerrados— y con un proveedor comercial es la que domina la factura.
+  #
+  # ANTES DEL PRIMER USO hay que preparar los datos, una sola vez:
+  #
+  #   docker compose --profile prepare up osrm-download osrm-build
+  #
+  # Eso baja el extracto de Uruguay (~50 MB) y lo preprocesa. Tarda unos
+  # minutos. Después ya no hace falta, salvo que quieras actualizar el mapa.
+
+  osrm-download:
+    image: curlimages/curl:8.11.1
+    profiles: ["prepare"]
+    # La imagen de curl corre como usuario sin privilegios (UID 100) y el volumen
+    # de Docker se crea como root, así que sin esto falla con "Permission denied"
+    # al escribir el .pbf. Es un contenedor efímero que solo baja un archivo a un
+    # volumen propio: correrlo como root acá no agrega superficie de ataque.
+    user: "0:0"
+    volumes:
+      - osrm-data:/data
+    # -C - reanuda si la descarga se cortó. -f falla con error en 404.
+    command: >
+      -fL -C - -o /data/uruguay-latest.osm.pbf
+      https://download.geofabrik.de/south-america/uruguay-latest.osm.pbf
+
+  osrm-build:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles: ["prepare"]
+    depends_on:
+      osrm-download:
+        condition: service_completed_successfully
+    volumes:
+      - osrm-data:/data
+    # MLD (multi-level Dijkstra) es el algoritmo que soporta /table de forma
+    # eficiente, que es lo que necesita el dispatch.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        cd /data
+        echo "→ extract"    && osrm-extract -p /opt/car.lua uruguay-latest.osm.pbf
+        echo "→ partition"  && osrm-partition uruguay-latest.osrm
+        echo "→ customize"  && osrm-customize uruguay-latest.osrm
+        echo "OSRM listo."
+
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    container_name: orbit-osrm
+    volumes:
+      - osrm-data:/data
+    # El entrypoint verifica que los datos existan ANTES de arrancar el motor.
+    #
+    # Sin esta guarda, osrm-routed sale con error y el contenedor entra en loop
+    # de reinicio con un mensaje que no dice nada sobre la causa. Un contenedor
+    # que se reinicia sin explicar por qué es una hora perdida para quien lo
+    # mira. Así, en vez de crashear, dice qué falta y espera.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        if [ ! -f /data/uruguay-latest.osrm.mldgr ]; then
+          echo "──────────────────────────────────────────────────────────────"
+          echo " OSRM no tiene los datos del mapa preparados."
+          echo ""
+          echo " Corré esto una sola vez:"
+          echo "   docker compose --profile prepare up osrm-download osrm-build"
+          echo ""
+          echo " Mientras tanto el API funciona igual: cae a la estimación"
+          echo " local de rutas y lo declara en el campo routeProvider."
+          echo "──────────────────────────────────────────────────────────────"
+          sleep infinity
+        fi
+        exec osrm-routed --algorithm mld --max-table-size 200 /data/uruguay-latest.osrm
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      # Una ruta corta en Montevideo. Si responde, los datos están cargados.
+      #
+      # Si OSRM está esperando los datos, esto falla y el contenedor queda
+      # unhealthy — y eso es correcto, porque no puede rutear. El API no depende
+      # de su salud (depends_on: service_started), así que no bloquea nada.
+      test: ["CMD-SHELL", "curl -sf 'http://localhost:5000/route/v1/driving/-56.1553,-34.9112;-56.2044,-34.9066?overview=false' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: runtime
+    container_name: orbit-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      osrm:
+        # started y no healthy: si OSRM todavía no tiene datos preparados, el
+        # API igual tiene que arrancar y caer a la estimación local. Un
+        # proveedor de mapas caído no puede tumbar la plataforma.
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      PORT: "8080"
+      LOG_LEVEL: debug
+      # JSON, no pino-pretty: la imagen se construye con `npm ci --omit=dev` y
+      # pino-pretty es una devDependency. Para logs legibles usá la sobrecapa
+      # docker-compose.dev.yml, que corre sobre el stage `build` (sí tiene
+      # devDependencies).
+      LOG_PRETTY: "false"
+      DATABASE_URL: postgres://orbit:orbit@postgres:5432/orbit
+      REDIS_URL: redis://redis:6379
+      QUOTE_SIGNING_SECRET: dev_quote_secret_0123456789abcdef0123456789ab
+      AUTH_MODE: dev
+      AUTH_DEV_SECRET: dev_auth_secret_0123456789abcdef0123456789abcd
+      DISPATCH_OFFER_TTL_SECONDS: "15"
+      DISPATCH_WAVE_RADII_M: "3000,5000,8000"
+      DISPATCH_WAVE_SIZES: "3,5,5"
+      DRIVER_POSITION_TTL_SECONDS: "30"
+      CORS_ORIGINS: "*"
+      # Ruteo real y gratis, dentro de la red de Compose.
+      # Si OSRM no responde, el API cae a la estimación local y lo declara en
+      # el campo routeProvider de la cotización.
+      OSRM_URL: http://osrm:5000
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  osrm-data:

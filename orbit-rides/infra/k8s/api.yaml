@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbit-api
+  namespace: orbit
+spec:
+  type: ClusterIP
+  selector:
+    app: orbit-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbit-api
+  namespace: orbit
+  labels:
+    app: orbit-api
+spec:
+  # ¡OJO! replicas: 1 a propósito.
+  # Antes de subir esto hay que reemplazar los timers en memoria del worker de
+  # dispatch por BullMQ, y ponerle un adapter de Redis al hub de WebSocket.
+  # Está explicado en infra/k8s/README.md y en el propio dispatcher.ts.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: orbit-api
+  template:
+    metadata:
+      labels:
+        app: orbit-api
+    spec:
+      # Margen para que el apagado ordenado termine los viajes en vuelo.
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: ghcr.io/TU_ORG/orbit-api:latest   # reemplazar
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef: { name: orbit-api-config }
+            - secretRef:    { name: orbit-api-secrets }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 512Mi }
+          # startup: le da tiempo a conectar con Postgres y Redis sin que
+          # liveness lo mate durante el arranque.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            failureThreshold: 20
+            periodSeconds: 3
+          # liveness pega a /health (no toca la base): si la base está caída no
+          # queremos que Kubernetes reinicie el pod en loop, queremos que quede
+          # "not ready" y deje de recibir tráfico.
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # readiness sí verifica Postgres y Redis.
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 4
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orbit-api-pdb
+  namespace: orbit
+spec:
+  # Con replicas: 1 esto no hace nada útil todavía; queda listo para cuando
+  # subas a 3 o más.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: orbit-api

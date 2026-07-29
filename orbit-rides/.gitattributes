@@ -1,0 +1,28 @@
+# Normalización de fin de línea.
+#
+# Sin esto, editar los archivos desde Linux o WSL y volver a Windows produce
+# diffs enormes que no cambian ni un carácter de contenido: solo CRLF por LF.
+# Pasó en este proyecto — 19 archivos con 10.981 inserciones y 10.981
+# eliminaciones exactas, la firma de un cambio de fin de línea.
+#
+# `text=auto` deja que git guarde LF en el repositorio y entregue lo que
+# corresponda a cada sistema al hacer checkout.
+* text=auto
+
+# Los scripts de Windows necesitan CRLF para ejecutarse bien.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Los scripts de shell y los gradlew necesitan LF, incluso en Windows.
+*.sh text eol=lf
+gradlew text eol=lf
+
+# Binarios: que git no los toque.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pbf binary
+*.xlsx binary
+*.tgz binary
+*.keystore binary

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orbit-api-config
+  namespace: orbit
+data:
+  NODE_ENV: "production"
+  PORT: "8080"
+  LOG_LEVEL: "info"
+  AUTH_MODE: "firebase"
+  DISPATCH_OFFER_TTL_SECONDS: "15"
+  DISPATCH_WAVE_RADII_M: "3000,5000,8000"
+  DISPATCH_WAVE_SIZES: "3,5,5"
+  DRIVER_POSITION_TTL_SECONDS: "30"
+  QUOTE_TTL_SECONDS: "120"
+  DATABASE_POOL_MAX: "10"

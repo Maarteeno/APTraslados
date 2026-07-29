@@ -1,0 +1,29 @@
+{
+  "name": "@orbit/rider",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "android": "expo run:android",
+    "start": "expo start --dev-client",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prebuild": "expo prebuild --platform android --clean"
+  },
+  "dependencies": {
+    "@maplibre/maplibre-react-native": "^11.3.6",
+    "@orbit/client": "*",
+    "@react-native-async-storage/async-storage": "^3.1.1",
+    "expo": "^57.0.8",
+    "expo-location": "^57.0.6",
+    "expo-status-bar": "^57.0.1",
+    "react": "19.2.8",
+    "react-native": "0.86.2",
+    "expo-build-properties": "^57.0.0",
+    "expo-system-ui": "^57.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "typescript": "^5.6.3",
+    "@types/geojson": "^7946.0.16"
+  }
+}
